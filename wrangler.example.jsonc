@@ -1,0 +1,56 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "synopsis",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-04-27",
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "vars": {
+    // AI 三选一：只保留所选组的 SUMMARY_PROVIDER 和模型，模型名必须填写。
+    // 密钥放在本地 .dev.vars / 生产 Secrets；不要写入本文件。
+
+    // A. 通用 OpenAI 兼容接口（默认）：配套密钥 OPENAI_API_KEY。
+    "SUMMARY_PROVIDER": "openai",
+    "OPENAI_MODEL": "YOUR_MODEL_ID",
+    // 可选：省略时使用 OpenAI 官方地址；其他兼容服务需填写其基础地址。
+    // "OPENAI_BASE_URL": "https://api.openai.com/v1",
+    // 可选：供应商扩展参数，默认不传。
+    // "OPENAI_EXTRA_BODY": "{\"max_completion_tokens\":1024}",
+
+    // B. OpenRouter：用本组替换 A 组的模式和模型，配套密钥 OPENROUTER_API_KEY。
+    // "SUMMARY_PROVIDER": "openrouter",
+    // "OPENROUTER_MODEL": "YOUR_OPENROUTER_MODEL_ID",
+    // 可选：以下基础地址为默认值；备用模型默认不启用。
+    // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
+    // "OPENROUTER_FALLBACK_MODEL": "YOUR_FALLBACK_MODEL_ID",
+    // "OPENROUTER_ZDR": "false",
+    // reasoning 参数由 pnpm run deploy 按模型能力维护，无需预先填写。
+
+    // C. Gemini：用本组替换 A 组的模式和模型，配套密钥 GEMINI_API_KEY。
+    // "SUMMARY_PROVIDER": "gemini",
+    // "GEMINI_MODEL": "YOUR_GEMINI_MODEL_ID",
+    // 可选：省略时使用下方官方地址，仅使用代理等自定义入口时需要修改。
+    // "GEMINI_BASE_URL": "https://generativelanguage.googleapis.com/v1beta",
+
+    // 共用可选项：以下注释中的值均为程序默认值，一般无需填写。
+    // "GMAIL_USER_ID": "me",
+    // "MAX_PARSE_BYTES": "10485760",
+    // "CRON_LOCK_TTL_SECONDS": "240",
+    // "TELEGRAM_RETRY_LIMIT": "3",
+    // SUMMARY_PROMPT 可覆盖内置中文提示词，详见配置文档。
+    // ENVIRONMENT 仅用于健康检查展示；省略时为 development。
+    "ENVIRONMENT": "production"
+  },
+  // 可选兜底：使用 Cloudflare Email Sending 时取消下方注释，并替换已验证发件地址。
+  // 同时填写 CF_EMAIL_FROM 和 BACKUP_EMAIL_TO，详见 .dev.vars.example。
+  // "send_email": [
+  //   { "name": "EMAIL", "allowed_sender_addresses": ["backup@example.com"] }
+  // ],
+
+  // 必填绑定：替换创建 MAIL_KV 后得到的两个 ID。
+  "kv_namespaces": [
+    { "binding": "MAIL_KV", "id": "YOUR_KV_NAMESPACE_ID", "preview_id": "YOUR_PREVIEW_KV_NAMESPACE_ID" }
+  ]
+}

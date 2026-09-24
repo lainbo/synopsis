@@ -1,0 +1,36 @@
+export interface Env {
+  MAIL_KV: KVNamespace;
+  EMAIL: SendEmail;
+  GMAIL_CLIENT_ID: string;
+  GMAIL_CLIENT_SECRET: string;
+  GMAIL_REFRESH_TOKEN: string;
+  BACKUP_EMAIL_TO: string;
+  CF_EMAIL_FROM: string;
+  RESEND_API_KEY: string;
+  RESEND_FROM: string;
+  SUMMARY_PROVIDER?: string;
+  OPENAI_API_KEY?: string;
+  OPENAI_BASE_URL?: string;
+  OPENAI_MODEL?: string;
+  OPENAI_EXTRA_BODY?: string;
+  OPENROUTER_BASE_URL?: string;
+  GEMINI_BASE_URL?: string;
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
+  OPENROUTER_FALLBACK_MODEL?: string;
+  OPENROUTER_REASONING_EFFORT?: string;
+  OPENROUTER_REASONING_EXCLUDE?: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
+  TG_BOT_TOKEN: string;
+  TG_CHAT_ID: string;
+  GMAIL_USER_ID?: string;
+  TG_WEBHOOK_SECRET?: string;
+  MAX_PARSE_BYTES?: string;
+  OPENROUTER_ZDR?: string;
+  SUMMARY_PROMPT?: string;
+  ENVIRONMENT?: string;
+  VERSION?: string;
+  CRON_LOCK_TTL_SECONDS?: string;
+  TELEGRAM_RETRY_LIMIT?: string;
+}

@@ -1,0 +1,37 @@
+# 复制为 .dev.vars 后填写；仅供本地开发，不会自动上传到生产。
+# 生产配置：pnpm exec wrangler secret put 变量名
+# 模式、模型和可选参数放在 wrangler.jsonc 的 vars 中，见 wrangler.example.jsonc。
+
+# 1. 基础必填：Gmail 原件备份 + Telegram 私聊通知和按钮。
+# Gmail 授权步骤：docs/gmail-oauth-setup.md
+GMAIL_CLIENT_ID=""
+GMAIL_CLIENT_SECRET=""
+GMAIL_REFRESH_TOKEN=""
+# Telegram 设置：docs/telegram-setup.md
+TG_BOT_TOKEN=""
+# 本人的正整数私聊 ID；先向 Bot 发送 /start。
+TG_CHAT_ID=""
+# 自行生成随机字符串，注册 webhook 时使用同一个 secret_token。
+TG_WEBHOOK_SECRET=""
+
+# 2. AI 三选一：只取消所选模式的密钥注释并填写，其他两家无需申请。
+# 通用 OpenAI 兼容接口：SUMMARY_PROVIDER=openai，必须填写 OPENAI_MODEL。
+# OPENAI_API_KEY=""
+# OpenRouter：SUMMARY_PROVIDER=openrouter，必须填写 OPENROUTER_MODEL。
+# OPENROUTER_API_KEY=""
+# Gemini：SUMMARY_PROVIDER=gemini，必须填写 GEMINI_MODEL。
+# GEMINI_API_KEY=""
+# 三家的 *_BASE_URL 均可省略，默认使用各自官方地址；自定义地址填在 vars 中。
+
+# 3. 邮件兜底：按需配置，正式收信建议至少配好一种。
+# 未配置可正常使用 Gmail 主备份，但 Gmail 失败时没有相应的兜底能力。
+# 使用任一种兜底时必填：能独立收信、不会路由回本 Worker 的地址。
+# BACKUP_EMAIL_TO=""
+
+# Cloudflare Email Sending：还需启用 wrangler.jsonc 的 send_email 绑定。
+# CF_EMAIL_FROM 必须与 allowed_sender_addresses 中的已验证发件地址一致。
+# CF_EMAIL_FROM=""
+
+# Resend：使用时以下两项都必填，RESEND_FROM 使用已验证的发件地址。
+# RESEND_API_KEY=""
+# RESEND_FROM=""

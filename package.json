@@ -1,0 +1,33 @@
+{
+  "name": "synopsis",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --persist-to .wrangler/state",
+    "deploy": "node scripts/verify-summary-config.mjs --fix && pnpm typecheck && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "verify:config": "node scripts/verify-summary-config.mjs",
+    "build": "wrangler deploy --dry-run --config wrangler.example.jsonc --outdir dist",
+    "hooks:enable": "git config --local core.hooksPath .githooks && git config --local synopsis.autoDeploy true",
+    "hooks:disable": "git config --local synopsis.autoDeploy false",
+    "check:public": "node scripts/check-public-files.mjs"
+  },
+  "dependencies": {
+    "hono": "4.13.8",
+    "html-to-text": "10.0.1",
+    "postal-mime": "2.7.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260917.1",
+    "@types/html-to-text": "9.0.4",
+    "jsonc-parser": "3.3.1",
+    "typescript": "6.0.3",
+    "wrangler": "4.133.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "packageManager": "pnpm@12.4.2"
+}

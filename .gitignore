@@ -1,0 +1,13 @@
+.ace-tool/
+.claude/settings.local.json
+node_modules/
+.wrangler/
+dist/
+wrangler.jsonc
+wrangler.local.*
+.dev.vars*
+!.dev.vars.example
+.env*
+!.env.example
+.DS_Store
+.VSCodeCounter
