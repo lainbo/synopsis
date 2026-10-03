@@ -51,6 +51,7 @@ if (mode === "working-tree") {
 const secrets = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /\bAIza[0-9A-Za-z_-]{35}\b/,
+  /\bAQ\.[0-9A-Za-z._-]{20,}/,
   /\b(?:sk-or-v1-|sk-proj-|sk-ant-)[A-Za-z0-9_-]{20,}\b/,
   /\b(?:ghp_|github_pat_)[A-Za-z0-9_]{30,}\b/,
   /\b\d{8,12}:[A-Za-z0-9_-]{35}\b/,
