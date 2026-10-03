@@ -1,11 +1,11 @@
 import { base64Encode } from "./base64url";
 import { getRequiredEnv } from "./config";
+import { buildFallbackEmailContent } from "./fallback-email-content";
 import type { ParsedEmailForProcessing } from "./mime-parser";
 import type { Env } from "../types";
+import { sanitizeErrorReason } from "../utils/error-reason";
 
 const RESEND_EMAIL_ENDPOINT = "https://api.resend.com/emails";
-const DEFAULT_TEXT =
-  "原邮件没有可用的纯文本内容，完整原件见附件 original.eml。";
 
 export class ResendFallbackError extends Error {
   readonly reason: string;
@@ -38,9 +38,7 @@ export async function sendResendFallback(
       body: JSON.stringify({
         from: getRequiredEnv(env, "RESEND_FROM"),
         to: [getRequiredEnv(env, "BACKUP_EMAIL_TO")],
-        subject: parsed.subject || "(无主题)",
-        text: parsed.text || DEFAULT_TEXT,
-        html: parsed.html || undefined,
+        ...buildFallbackEmailContent(parsed),
         reply_to: parsed.from || undefined,
         headers: {
           "X-Original-From": parsed.from,
@@ -100,23 +98,9 @@ async function parseErrorReason(response: Response): Promise<string> {
   const record = payload as Record<string, unknown>;
 
   return (
-    sanitizeReason(record.name) ??
-    sanitizeReason(record.error) ??
-    sanitizeReason(record.reason) ??
+    sanitizeErrorReason(record.name) ??
+    sanitizeErrorReason(record.error) ??
+    sanitizeErrorReason(record.reason) ??
     "resend_failed"
   );
-}
-
-function sanitizeReason(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const reason = value.trim();
-
-  if (/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(reason)) {
-    return reason;
-  }
-
-  return null;
 }

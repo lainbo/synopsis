@@ -10,9 +10,7 @@ export function healthHandler(c: AppContext) {
     environment: c.env.ENVIRONMENT ?? "development",
     timestamp: new Date().toISOString(),
     capabilities: {
-      hono: true,
       kv: Boolean(c.env.MAIL_KV),
-      emailWorker: true,
       maxParseBytesConfigured: Boolean(c.env.MAX_PARSE_BYTES)
     }
   });

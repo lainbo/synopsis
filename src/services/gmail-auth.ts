@@ -1,5 +1,6 @@
 import { getRequiredEnv } from "./config";
 import type { Env } from "../types";
+import { sanitizeErrorReason } from "../utils/error-reason";
 
 const GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const EARLY_REFRESH_MS = 60000;
@@ -16,10 +17,6 @@ export class GmailAuthError extends Error {
     this.reason = reason;
     this.status = status;
   }
-}
-
-export function clearGmailAccessTokenCache(): void {
-  cachedToken = null;
 }
 
 export async function getGmailAccessToken(
@@ -116,27 +113,13 @@ async function parseErrorReason(response: Response): Promise<string> {
   }
 
   const record = payload as Record<string, unknown>;
-  const error = sanitizeReason(record.error);
+  const error = sanitizeErrorReason(record.error);
 
   if (error) {
     return error;
   }
 
-  return sanitizeReason(record.error_description) ?? "token_refresh_failed";
-}
-
-function sanitizeReason(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const reason = value.trim();
-
-  if (/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(reason)) {
-    return reason;
-  }
-
-  return null;
+  return sanitizeErrorReason(record.error_description) ?? "token_refresh_failed";
 }
 
 function isTokenResponse(

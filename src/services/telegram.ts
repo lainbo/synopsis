@@ -25,6 +25,7 @@ export interface TelegramReplyMarkup {
 
 export interface TelegramMessageOptions {
   replyMarkup?: TelegramReplyMarkup;
+  timeoutMs?: number;
 }
 
 export const TELEGRAM_CALLBACK_VIEW_RAW = "view_raw";
@@ -33,6 +34,7 @@ export const TELEGRAM_CALLBACK_TRASH_GMAIL = "trash_gmail";
 
 const TELEGRAM_INLINE_CODE_PATTERN = /^验证码:\s*`([^`\n]+)`\s*$/;
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_TIMEOUT_MS = 10000;
 const TELEGRAM_TRUNCATION_NOTICE = "（内容过长，已截断。完整邮件请查看邮箱。）";
 
 export async function sendTelegramMessage(
@@ -53,7 +55,7 @@ export async function sendTelegramMessage(
   }
 
   return parseTelegramMessageResult(
-    await postTelegram(env, "sendMessage", body)
+    await postTelegram(env, "sendMessage", body, options.timeoutMs)
   );
 }
 
@@ -216,44 +218,51 @@ function parseTelegramMessageResult(result: unknown): { messageId: number } {
 async function postTelegram(
   env: Env,
   method: string,
-  body: Record<string, unknown>
+  body: Record<string, unknown>,
+  timeoutMs = TELEGRAM_TIMEOUT_MS
 ): Promise<unknown> {
   const token = getRequiredEnv(env, "TG_BOT_TOKEN");
-  let response: Response;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+    const response = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
       method: "POST",
       headers: {
         "content-type": "application/json"
       },
-      body: JSON.stringify(body)
+      body: JSON.stringify(body),
+      signal: controller.signal
     });
-  } catch {
-    throw new TelegramError("telegram_fetch_failed");
+
+    if (!response.ok) {
+      await response.body?.cancel();
+      throw new TelegramError(`telegram_http_${response.status}`, response.status);
+    }
+
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      throw new TelegramError("telegram_invalid_response", response.status);
+    }
+
+    if (!payload || typeof payload !== "object") {
+      throw new TelegramError("telegram_invalid_response", response.status);
+    }
+
+    const record = payload as Record<string, unknown>;
+    if (record.ok !== true) {
+      throw new TelegramError("telegram_api_error", response.status);
+    }
+
+    return record.result;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new TelegramError("telegram_timeout");
+    }
+    throw error instanceof TelegramError ? error : new TelegramError("telegram_fetch_failed");
+  } finally {
+    clearTimeout(timeout);
   }
-
-  if (!response.ok) {
-    throw new TelegramError(`telegram_http_${response.status}`, response.status);
-  }
-
-  let payload: unknown;
-
-  try {
-    payload = await response.json();
-  } catch {
-    throw new TelegramError("telegram_invalid_response", response.status);
-  }
-
-  if (!payload || typeof payload !== "object") {
-    throw new TelegramError("telegram_invalid_response", response.status);
-  }
-
-  const record = payload as Record<string, unknown>;
-
-  if (record.ok !== true) {
-    throw new TelegramError("telegram_api_error", response.status);
-  }
-
-  return record.result;
 }

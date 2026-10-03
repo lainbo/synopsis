@@ -41,11 +41,16 @@ export interface CreateEmailCacheEntryResult {
   record: EmailCacheRecord;
 }
 
-export async function createEmailCacheEntry(
+export async function getOrCreateEmailCacheEntry(
   kv: KVNamespace,
   input: CreateEmailCacheEntryInput
 ): Promise<CreateEmailCacheEntryResult> {
   const emailId = input.emailId;
+  const existing = await getEmailCacheRecord(kv, emailId);
+  if (existing) {
+    return { emailId, record: existing };
+  }
+
   const record: EmailCacheRecord = {
     text: buildReadableEmailBody(input.parsed),
     summaryText: input.summaryText,

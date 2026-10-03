@@ -1,4 +1,5 @@
 const PROCESSING_ID_VERSION = "v1";
+const RAW_PROCESSING_ID_PREFIX = "v2raw";
 const MISSING_DATE = "missing-date";
 
 export async function buildProcessingId(
@@ -8,7 +9,12 @@ export async function buildProcessingId(
   const messageId = normalizeMessageId(message.headers.get("message-id"));
 
   if (!messageId) {
-    return `v1raw:${await sha256Hex(rawBytes)}`;
+    const payload = {
+      rawHash: await sha256Hex(rawBytes),
+      envelopeTo: normalizeAddress(message.to),
+      envelopeFrom: normalizeAddress(message.from)
+    };
+    return `${RAW_PROCESSING_ID_PREFIX}:${await sha256Hex(new TextEncoder().encode(JSON.stringify(payload)))}`;
   }
 
   const payload = {
@@ -19,7 +25,7 @@ export async function buildProcessingId(
     envelopeFrom: normalizeAddress(message.from)
   };
 
-  return `v1:${await sha256Hex(new TextEncoder().encode(JSON.stringify(payload)))}`;
+  return `${PROCESSING_ID_VERSION}:${await sha256Hex(new TextEncoder().encode(JSON.stringify(payload)))}`;
 }
 
 function normalizeMessageId(value: string | null): string {

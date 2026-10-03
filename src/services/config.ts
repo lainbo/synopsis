@@ -53,6 +53,25 @@ export function getTelegramChatId(env: Env): string {
   return id;
 }
 
+export const TELEGRAM_RETRY_DELAY_MS = 5 * 60 * 1000;
+
+const DEFAULT_TELEGRAM_RETRY_LIMIT = 3;
+const DEFAULT_MAX_PARSE_BYTES = 10485760;
+
+export function getTelegramRetryLimit(env: Env): number {
+  return parsePositiveInteger(env.TELEGRAM_RETRY_LIMIT, DEFAULT_TELEGRAM_RETRY_LIMIT);
+}
+
+export function getMaxParseBytes(env: Env): number {
+  return parsePositiveInteger(env.MAX_PARSE_BYTES, DEFAULT_MAX_PARSE_BYTES);
+}
+
+export function parsePositiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export function getOpenAIExtraBody(env: Env): Record<string, unknown> {
   const raw = env.OPENAI_EXTRA_BODY?.trim();
   if (!raw) return {};

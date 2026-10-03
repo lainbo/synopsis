@@ -35,14 +35,11 @@ export async function parseMimeEmail(
   };
 }
 
-export function buildDegradedParsedEmail(
-  message: ForwardableEmailMessage,
-  error: unknown,
-  rawSize: number
+export function buildHeaderOnlyParsedEmail(
+  message: ForwardableEmailMessage
 ): ParsedEmailForProcessing {
   return {
     parse_done: false,
-    last_error: `parse_failed:${normalizeErrorMessage(error)}`,
     from: message.from,
     to: [message.to],
     subject: message.headers.get("subject") || "(无法解析主题)",
@@ -50,8 +47,17 @@ export function buildDegradedParsedEmail(
     html: "",
     date: message.headers.get("date") || undefined,
     messageId: message.headers.get("message-id") || undefined,
-    headers: headersToEntries(message.headers),
-    rawSize
+    headers: headersToEntries(message.headers)
+  };
+}
+
+export function buildDegradedParsedEmail(
+  message: ForwardableEmailMessage,
+  error: unknown
+): ParsedEmailForProcessing {
+  return {
+    ...buildHeaderOnlyParsedEmail(message),
+    last_error: `parse_failed:${normalizeErrorMessage(error)}`
   };
 }
 

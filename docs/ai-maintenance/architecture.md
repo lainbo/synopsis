@@ -48,11 +48,13 @@ flowchart TD
 
 邮件入口以 Cloudflare `message.to`（SMTP `RCPT TO`）作为本次实际投递的收件地址，写入处理状态的 `to`，并在创建或重建通知缓存时写入缓存的 `to`。摘要首行、原文查看、Cron 补偿及“返回摘要”使用状态或缓存里保存的 `to`，不回头解析邮件头 `To`。邮件头 `To` 缺失、为空地址组或包含其他收件人时也适用。解析出的邮件头和原始 MIME 保持原样。
 
+有 Message-ID 时沿用 `v1:` 处理编号。缺少 Message-ID 时，`v2raw:` 编号由原件哈希、SMTP 收件地址和发件地址共同计算；相同原件投递到不同地址时分别备份和通知，同一投递重试时复用状态。
+
 供应商发送与 KV 状态保存分别处理异常。供应商确认成功后即停止备份链；状态保存失败记录 `backup_state_save_failed`，通知阶段保存状态时会再次带上已确认的备份结果。处理状态、邮件缓存和消息映射遇到 KV 写入 429 时等待 1 秒，仅重试一次。
 
-通知缓存 ID 在首次处理状态中固定；正文缓存于原件备份完成后、进入后台摘要前保存。首次准备缓存失败时，通知入口会再次尝试保存。Cron 只为 `backup_done=true` 且 `telegram_done=false` 的邮件补偿摘要通知：缓存已有摘要时优先复用；只有正文时使用同一份缓存重新生成摘要。缓存中的 `summary` 保存摘要结果，便于中断后恢复模型、成功标记及错误原因。
+通知缓存 ID 在首次处理状态中固定；正文缓存于原件备份完成后、进入后台摘要前保存。邮件重投时复用已有缓存，保留摘要及摘要结果；首次准备缓存失败时，通知入口会再次尝试。Cron 只为 `backup_done=true` 且 `telegram_done=false` 的邮件补偿摘要通知，并调用与首次通知相同的实现：缓存已有摘要时复用，只有正文时重新生成。缓存中的 `summary` 保存摘要结果，便于中断后恢复模型、成功标记及错误原因。解析失败或超过解析阈值时直接生成占位通知，不调用 AI；可读正文为空时仍以发件人、收件人、主题和时间请求摘要。
 
-消息已发送但映射写入失败时，Cron 修复原消息的映射。备份告警和 Gmail 授权告警分别按自己的状态补偿，计数和终止条件见 [运维说明](operations.md#cron-和补偿)。
+首次通知或 Cron 补发取得 Telegram 消息编号后，映射或完成状态写入失败会保存该编号。后续重投、Cron 只修复该消息的映射和状态，不重新发送；修复本身不依赖正文缓存。单封邮件的补偿异常会记录日志，继续扫描其他邮件。备份告警和 Gmail 授权告警分别按自己的状态补偿；备份已经成功时不再补发全部备份失败告警，计数和终止条件见 [运维说明](operations.md#cron-和补偿)。
 
 ## 定时补偿流程
 
@@ -94,6 +96,7 @@ flowchart TD
 | `gmail-backup.ts` | Gmail `messages.insert`（multipart media upload）和 `trash` |
 | `cloudflare-email-fallback.ts` | Cloudflare Email Sending 兜底，附带原始 MIME 附件 |
 | `resend-fallback.ts` | Resend 兜底，附带原始 MIME 附件 |
+| `fallback-email-content.ts` | 两条兜底共用的主题、纯文本和 HTML 默认值 |
 | `notification-orchestrator.ts` | 基于预存正文生成摘要、更新缓存、发送 Telegram、合并保存结果 |
 | `telegram-compensation.ts` | Cron 扫描失败状态并补偿通知/告警 |
 | `email-cache.ts` | `email:<uuid>` 缓存、`msgmap:<messageId>` 映射 |
@@ -102,10 +105,12 @@ flowchart TD
 | `openai-summary.ts` / `chat-completions.ts` | 通用 Chat Completions 请求、参数透传及共用响应解析 |
 | `openrouter-summary.ts` | OpenRouter Chat Completions 请求、ZDR 降级、摘要响应解析 |
 | `gemini-summary.ts` | Gemini `generateContent` 请求、thinking 配置、摘要响应解析 |
+| `summary-request.ts` | 三种摘要模式共用的超时、重试次数、可重试错误判断、`Retry-After` 解析及错误详情脱敏 |
 | `summary-prompt.ts` | 默认中文摘要 prompt 和环境变量覆盖 |
 | `reliability-alerts.ts` | Gmail fallback、critical backup、Gmail auth alert |
 | `config.ts` | 环境变量读取与必填校验 |
 | `logging.ts` | 结构化日志输出 |
+| `error-reason.ts` | Gmail 与 Resend 错误原因的格式校验 |
 
 ## KV key 约定
 

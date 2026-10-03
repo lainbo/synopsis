@@ -1,8 +1,9 @@
 import { buildProcessingId } from "../services/processing-id";
 import { backupEmail } from "../services/backup-orchestrator";
 import { notifyEmailSummary } from "../services/notification-orchestrator";
+import { getMaxParseBytes, TELEGRAM_RETRY_DELAY_MS } from "../services/config";
 import {
-  createEmailCacheEntry,
+  getOrCreateEmailCacheEntry,
   type CreateEmailCacheEntryResult
 } from "../services/email-cache";
 import {
@@ -12,6 +13,7 @@ import {
 } from "../services/processing-state";
 import {
   buildDegradedParsedEmail,
+  buildHeaderOnlyParsedEmail,
   type ParsedEmailForProcessing,
   parseMimeEmail
 } from "../services/mime-parser";
@@ -30,9 +32,7 @@ export async function handleEmail(
     raw = await readRawEmail(message);
   } catch (error) {
     logError("raw_read_failed", error);
-    const rawReadFailure =
-      error instanceof Error ? error : new Error(String(error));
-    throw rawReadFailure;
+    throw error;
   }
 
   const processingId = await buildProcessingId(message, raw.bytes);
@@ -55,21 +55,8 @@ export async function handleEmail(
 
   if (raw.rawSize > maxParseBytes) {
     parsed = {
-      parse_done: false,
-      parse_skipped_reason: "skipped_large_email",
-      from: message.from,
-      to: [message.to],
-      subject: message.headers.get("subject") || "(无法解析主题)",
-      text: "",
-      html: "",
-      date: message.headers.get("date") || undefined,
-      messageId: message.headers.get("message-id") || undefined,
-      headers: Array.from(message.headers.entries()).map(([key, value]) => ({
-        key: key.toLowerCase(),
-        value
-      })),
-      rawSize: raw.rawSize,
-      maxParseBytes
+      ...buildHeaderOnlyParsedEmail(message),
+      parse_skipped_reason: "skipped_large_email"
     };
     logInfo("email_parse_skipped", {
       processingId,
@@ -81,7 +68,7 @@ export async function handleEmail(
     try {
       parsed = await parseMimeEmail(raw.bytes);
     } catch (error) {
-      parsed = buildDegradedParsedEmail(message, error, raw.rawSize);
+      parsed = buildDegradedParsedEmail(message, error);
       logError("email_parse_failed", error, {
         processingId,
         rawSize: raw.rawSize
@@ -98,8 +85,8 @@ export async function handleEmail(
   const parsedForState: ParsedEmailForProcessing = {
     ...parsed,
     to: [message.to],
-    rawSize: parsed.rawSize ?? raw.rawSize,
-    maxParseBytes: parsed.maxParseBytes ?? maxParseBytes
+    rawSize: raw.rawSize,
+    maxParseBytes
   };
 
   state = await mergeProcessingState(env.MAIL_KV, processingId, {
@@ -111,14 +98,14 @@ export async function handleEmail(
           telegram_done: false as const,
           telegram_email_id: state.telegram_email_id ?? crypto.randomUUID(),
           telegram_next_retry_at: new Date(
-            Date.now() + TELEGRAM_COMPENSATION_GRACE_MS
+            Date.now() + TELEGRAM_RETRY_DELAY_MS
           ).toISOString()
         }
       : {}),
     incrementAttempt: true
   });
 
-  const backupResult = await backupEmail({
+  await backupEmail({
     env,
     processingId,
     rawBytes: raw.bytes,
@@ -132,7 +119,7 @@ export async function handleEmail(
 
   let cache: CreateEmailCacheEntryResult | undefined;
   try {
-    cache = await createEmailCacheEntry(env.MAIL_KV, {
+    cache = await getOrCreateEmailCacheEntry(env.MAIL_KV, {
       emailId: state.telegram_email_id!,
       parsed: parsedForState,
       summaryText: ""
@@ -147,26 +134,9 @@ export async function handleEmail(
       processingId,
       parsed: parsedForState,
       state,
-      cache,
-      backupProvider: backupResult.provider,
-      backupMessageId: backupResult.skipped ? state.gmail_message_id : backupResult.messageId
+      cache
     }).catch((error) => {
       logError("email_notification_failed", error, { processingId });
     })
   );
-}
-
-export const DEFAULT_MAX_PARSE_BYTES = 10485760;
-
-// 与 telegram-compensation 的 RETRY_DELAY_MS 对齐：给 waitUntil 内的即时通知留一个重试周期。
-const TELEGRAM_COMPENSATION_GRACE_MS = 5 * 60 * 1000;
-
-export function getMaxParseBytes(env: Env): number {
-  const configured = Number(env.MAX_PARSE_BYTES);
-
-  if (Number.isFinite(configured) && Number.isInteger(configured) && configured > 0) {
-    return configured;
-  }
-
-  return DEFAULT_MAX_PARSE_BYTES;
 }

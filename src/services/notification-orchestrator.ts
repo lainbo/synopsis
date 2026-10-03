@@ -4,17 +4,19 @@ import {
   mergeProcessingState,
   type ProcessingState
 } from "./processing-state";
-import { getRequiredEnv, getTelegramChatId } from "./config";
 import {
-  createEmailCacheEntry,
+  getRequiredEnv,
+  getTelegramChatId,
+  getTelegramRetryLimit,
+  TELEGRAM_RETRY_DELAY_MS
+} from "./config";
+import {
+  getOrCreateEmailCacheEntry,
   putEmailCacheRecord,
   putMessageMapping,
   type CreateEmailCacheEntryResult
 } from "./email-cache";
-import {
-  buildReadableEmailBody,
-  buildSummaryInputText
-} from "./email-readable-text";
+import { buildSummaryInputText } from "./email-readable-text";
 import {
   buildSummaryKeyboard,
   sendTelegramMessage
@@ -31,8 +33,6 @@ export interface NotifyEmailSummaryParams {
   state: ProcessingState;
   cache?: CreateEmailCacheEntryResult;
   retryLimit?: number;
-  backupProvider?: "gmail" | "cloudflare_email" | "resend";
-  backupMessageId?: string;
 }
 
 export async function notifyEmailSummary({
@@ -41,123 +41,85 @@ export async function notifyEmailSummary({
   parsed,
   state,
   cache,
-  retryLimit = 3,
-  backupProvider,
-  backupMessageId
+  retryLimit = getTelegramRetryLimit(env)
 }: NotifyEmailSummaryParams): Promise<void> {
-  if (state.telegram_done === true) {
-    logInfo("telegram_already_done", { processingId });
+  if (state.backup_done !== true || state.telegram_done === true) {
     return;
   }
 
+  const attemptedAt = new Date();
+  const attempt = (state.telegram_attempts ?? 0) + 1;
+  const emailId = state.telegram_email_id;
+  const gmailMessageId = state.backup_provider === "gmail" ? state.gmail_message_id : undefined;
+  let messageId = state.telegram_message_id;
+  let stage: NonNullable<ProcessingState["telegram_stage"]> = "email_cache_failed";
+  let summary: SummaryResult | undefined;
+  let summaryPatch: ProcessingState = {};
+  let variant = state.telegram_variant;
+  const backupPatch: ProcessingState = {
+    backup_done: state.backup_done,
+    backup_provider: state.backup_provider,
+    backup_done_at: state.backup_done_at,
+    gmail_message_id: state.gmail_message_id,
+    fallback_message_id: state.fallback_message_id,
+    backup_error: state.backup_error,
+    backup_error_chain: state.backup_error_chain
+  };
+
   try {
-    const now = () => new Date();
-    let summaryPatch: ProcessingState = {};
-    const backupPatch: ProcessingState = {
-      backup_done: state.backup_done,
-      backup_provider: state.backup_provider,
-      backup_done_at: state.backup_done_at,
-      gmail_message_id: state.gmail_message_id,
-      fallback_message_id: state.fallback_message_id,
-      backup_error: state.backup_error,
-      backup_error_chain: state.backup_error_chain
-    };
-    const recordTelegramFailure = async (
-      stage: NonNullable<ProcessingState["telegram_stage"]>,
-      error: unknown,
-      extra: Partial<ProcessingState> = {}
-    ): Promise<void> => {
-      const attempt = (state.telegram_attempts ?? 0) + 1;
-      const attemptedAt = now();
+    if (!emailId) {
+      throw new Error("Notification cache ID is missing");
+    }
 
-      await mergeProcessingState(env.MAIL_KV, processingId, {
-        ...backupPatch,
-        ...summaryPatch,
-        ...extra,
-        telegram_done: false,
-        telegram_stage: stage,
-        telegram_error: getReason(error, stage),
-        telegram_attempts: attempt,
-        telegram_last_attempt_at: attemptedAt.toISOString(),
-        telegram_next_retry_at:
-          attempt < retryLimit
-            ? new Date(attemptedAt.getTime() + 300000).toISOString()
-            : undefined
-      });
-    };
-
-    let entry: CreateEmailCacheEntryResult;
-    try {
-      entry = cache ?? await createEmailCacheEntry(env.MAIL_KV, {
-        emailId: state.telegram_email_id!,
+    // 已取得消息编号后只修复映射和状态，不能再次发送消息。
+    if (messageId === undefined) {
+      const entry = cache ?? await getOrCreateEmailCacheEntry(env.MAIL_KV, {
+        emailId,
         parsed,
         summaryText: ""
       });
-    } catch {
-      await recordTelegramFailure("email_cache_failed", "email_cache_failed");
-      return;
-    }
-    const emailId = entry.emailId;
+      summary = entry.record.summary;
+      let text = entry.record.summaryText;
 
-    const summary = await generateEmailSummary(env, {
-      to: parsed.to.join(", "),
-      text: buildSummaryInputText(parsed),
-      subject: parsed.subject
-    });
+      if (!text) {
+        summary ??= await generateNotificationSummary(env, parsed, entry.record.text);
+        text = buildTelegramText(summary);
+      }
 
-    summaryPatch = buildSummaryStatePatch(summary);
+      if (summary) {
+        summaryPatch = buildSummaryStatePatch(summary);
+        variant = summary.ok ? "summary" : "summary_placeholder";
+      }
 
-    const telegram_variant = summary.ok ? "summary" : "summary_placeholder";
-    const message = buildTelegramText(parsed, summary);
-    const gmailMessageId =
-      backupProvider === "gmail" ? backupMessageId ?? state.gmail_message_id : undefined;
+      if (!entry.record.summaryText) {
+        await putEmailCacheRecord(env.MAIL_KV, emailId, {
+          ...entry.record,
+          summaryText: text,
+          summary
+        });
+      }
 
-    try {
-      await putEmailCacheRecord(env.MAIL_KV, emailId, {
-        ...entry.record,
-        summaryText: message,
-        summary
-      });
-    } catch {
-      await recordTelegramFailure("email_cache_failed", "email_cache_failed", {
-        telegram_variant
-      });
-      return;
-    }
-
-    let telegram: { messageId: number };
-
-    try {
-      telegram = await sendTelegramMessage(env, message, {
+      stage = "send_message_failed";
+      const telegram = await sendTelegramMessage(env, withPrivacyRouteNotice(
+        text,
+        summary?.privacyDowngraded ?? state.summary_privacy_downgraded ?? false
+      ), {
         replyMarkup: buildSummaryKeyboard({
           showDeleteWithGmail: Boolean(gmailMessageId)
         })
       });
-    } catch (error) {
-      await recordTelegramFailure("send_message_failed", error, {
-        telegram_email_id: emailId,
-        telegram_variant
-      });
-      return;
+      messageId = telegram.messageId;
     }
 
-    try {
-      await putMessageMapping(env.MAIL_KV, telegram.messageId, {
-        emailId,
-        chatId: getTelegramChatId(env),
-        messageId: telegram.messageId,
-        gmailMessageId,
-        createdAt: new Date().toISOString()
-      });
-    } catch (error) {
-      await recordTelegramFailure("message_sent_mapping_failed", error, {
-        telegram_email_id: emailId,
-        telegram_message_id: telegram.messageId,
-        telegram_variant
-      });
-      return;
-    }
-
+    stage = "message_sent_mapping_failed";
+    await putMessageMapping(env.MAIL_KV, messageId, {
+      emailId,
+      chatId: getTelegramChatId(env),
+      messageId,
+      gmailMessageId,
+      createdAt: attemptedAt.toISOString()
+    });
+    stage = "message_sent_state_failed";
     await mergeProcessingState(env.MAIL_KV, processingId, {
       ...backupPatch,
       ...summaryPatch,
@@ -165,21 +127,68 @@ export async function notifyEmailSummary({
       telegram_done_at: new Date().toISOString(),
       telegram_error: undefined,
       telegram_email_id: emailId,
-      telegram_message_id: telegram.messageId,
-      telegram_variant,
+      telegram_message_id: messageId,
+      telegram_variant: variant,
       telegram_stage: "done",
+      telegram_attempts: attempt,
+      telegram_last_attempt_at: attemptedAt.toISOString(),
       telegram_next_retry_at: undefined
     });
-
-    await maybeSendFallbackModelAlert(env, summary);
-
-    logInfo("telegram_notification_done", {
-      processingId,
-      telegram_message_id: telegram.messageId
-    });
   } catch (error) {
-    logError("email_notification_unexpected_failed", error, { processingId });
+    await mergeProcessingState(env.MAIL_KV, processingId, {
+      ...backupPatch,
+      ...summaryPatch,
+      telegram_done: false,
+      telegram_stage: stage,
+      telegram_error: getReason(error, stage),
+      telegram_email_id: emailId,
+      telegram_message_id: messageId,
+      telegram_variant: variant,
+      telegram_attempts: attempt,
+      telegram_last_attempt_at: attemptedAt.toISOString(),
+      telegram_next_retry_at: attempt < retryLimit
+        ? new Date(Date.now() + TELEGRAM_RETRY_DELAY_MS).toISOString()
+        : undefined
+    });
+    return;
   }
+
+  if (summary) {
+    await maybeSendFallbackModelAlert(env, summary);
+  }
+  logInfo("telegram_notification_done", {
+    processingId,
+    telegram_message_id: messageId
+  });
+}
+
+const SKIPPED_SUMMARY_REASONS = new Set(["summary_skipped_large_email", "summary_parse_failed"]);
+
+export function isSummarySkipped(summary: SummaryResult | undefined): boolean {
+  return summary?.ok === false && SKIPPED_SUMMARY_REASONS.has(summary.reason);
+}
+
+async function generateNotificationSummary(
+  env: Env,
+  parsed: ParsedEmailForProcessing,
+  text: string
+): Promise<SummaryResult> {
+  if (parsed.parse_skipped_reason === "skipped_large_email") {
+    return skippedSummary("summary_skipped_large_email");
+  }
+
+  if (!parsed.parse_done) {
+    return skippedSummary("summary_parse_failed");
+  }
+
+  return generateEmailSummary(env, {
+    to: parsed.to.join(", "),
+    text: buildSummaryInputText({ ...parsed, text, html: "" })
+  });
+}
+
+function skippedSummary(reason: string): SummaryResult {
+  return { ok: false, reason, privacyDowngraded: false, fallbackModelUsed: false };
 }
 
 async function maybeSendFallbackModelAlert(
@@ -201,7 +210,7 @@ async function maybeSendFallbackModelAlert(
   }
 }
 
-export function buildSummaryStatePatch(
+function buildSummaryStatePatch(
   result: SummaryResult
 ): ProcessingState {
   if (result.ok) {
@@ -226,38 +235,14 @@ export function buildSummaryStatePatch(
   };
 }
 
-function buildTelegramText(
-  parsed: ParsedEmailForProcessing,
-  summary: SummaryResult
-): string {
+function buildTelegramText(summary: SummaryResult): string {
   return withPrivacyRouteNotice(
-    summary.ok ? summary.summary : buildPlaceholder(parsed, summary),
+    summary.ok ? summary.summary : `${formatSummaryFailureForTelegram(summary.reason, {
+      detail: summary.detail,
+      privacyDowngraded: summary.privacyDowngraded
+    })}，原件已完成备份，完整内容请查看邮箱。`,
     summary.privacyDowngraded
   );
-}
-
-function buildPlaceholder(
-  parsed: ParsedEmailForProcessing,
-  summary: Extract<SummaryResult, { ok: false }>
-): string {
-  const backupText = "原件已完成备份，可查看原文。";
-
-  if (parsed.parse_skipped_reason === "skipped_large_email") {
-    return `邮件较大，已跳过 AI 摘要，${backupText}`;
-  }
-
-  if (parsed.parse_done === false) {
-    return `邮件正文解析失败，已保留原件备份，${backupText}`;
-  }
-
-  if (!buildReadableEmailBody(parsed)) {
-    return `邮件正文为空，无法生成摘要，${backupText}`;
-  }
-
-  return `${formatSummaryFailureForTelegram(summary.reason, {
-    detail: summary.detail,
-    privacyDowngraded: summary.privacyDowngraded
-  })}，${backupText}`;
 }
 
 function getReason(error: unknown, fallback: string): string {

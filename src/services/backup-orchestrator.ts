@@ -26,22 +26,13 @@ export interface BackupEmailParams {
   state: ProcessingState;
 }
 
-export type BackupEmailResult =
-  | {
-      provider: "gmail" | "cloudflare_email" | "resend";
-      skipped: false;
-      messageId?: string;
-      backupErrorChain?: string;
-    }
-  | { provider: "gmail" | "cloudflare_email" | "resend"; skipped: true };
-
 export async function backupEmail({
   env,
   processingId,
   rawBytes,
   parsed,
   state
-}: BackupEmailParams): Promise<BackupEmailResult> {
+}: BackupEmailParams): Promise<void> {
   if (state.backup_done === true) {
     const provider = state.backup_provider ?? "gmail";
     if (
@@ -67,7 +58,7 @@ export async function backupEmail({
     }
 
     logInfo("backup_already_done", { processingId, backup_provider: provider });
-    return { provider, skipped: true };
+    return;
   }
 
   const providers = [
@@ -84,7 +75,7 @@ export async function backupEmail({
       send: async () => (await sendResendFallback(env, processingId, parsed, rawBytes)).id
     }
   ];
-  const reasons: Partial<Record<BackupEmailResult["provider"], string>> = {};
+  const reasons: Partial<Record<NonNullable<ProcessingState["backup_provider"]>, string>> = {};
   const errors: string[] = [];
   let authReason: GmailAuthExpiryReason | null = null;
 
@@ -148,7 +139,7 @@ export async function backupEmail({
       gmail_message_id: state.gmail_message_id,
       fallback_message_id: state.fallback_message_id
     });
-    return { provider, skipped: false, messageId, backupErrorChain };
+    return;
   }
 
   const backupErrorChain = errors.join(";");
@@ -170,9 +161,8 @@ export async function backupEmail({
     const alert = await sendCriticalBackupAlert(env, parsed, {
       gmailReason: reasons.gmail ?? "unknown_error",
       cloudflareReason: reasons.cloudflare_email ?? "unknown_error",
-      resendReason: reasons.resend ?? "unknown_error",
-      backupErrorChain
-    }, { timeoutMs: 2500 });
+      resendReason: reasons.resend ?? "unknown_error"
+    });
     Object.assign(failureState, {
       critical_backup_alert_done: alert.ok,
       critical_backup_alert_done_at: alert.ok ? new Date().toISOString() : undefined,
@@ -199,15 +189,12 @@ export async function backupEmail({
 }
 
 function getBackupFailureReason(error: unknown): string {
-  if (error instanceof GmailBackupError || error instanceof GmailAuthError) {
-    return error.reason;
-  }
-
-  if (error instanceof CloudflareEmailFallbackError) {
-    return error.reason;
-  }
-
-  if (error instanceof ResendFallbackError) {
+  if (
+    error instanceof GmailBackupError ||
+    error instanceof GmailAuthError ||
+    error instanceof CloudflareEmailFallbackError ||
+    error instanceof ResendFallbackError
+  ) {
     return error.reason;
   }
 

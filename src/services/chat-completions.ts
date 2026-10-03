@@ -1,32 +1,8 @@
+import { isAbortError } from "./summary-request";
+
 export type ChatCompletionResult =
   | { ok: true; summary: string; model: string }
   | { ok: false; reason: string; model?: string };
-
-export function parseRetryAfterMs(value: string | null): number | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  const seconds = Number(value);
-
-  if (Number.isFinite(seconds) && seconds > 0) {
-    return Math.min(seconds * 1000, 2000);
-  }
-
-  const dateMs = Date.parse(value);
-
-  if (!Number.isFinite(dateMs)) {
-    return undefined;
-  }
-
-  const delayMs = dateMs - Date.now();
-
-  if (delayMs <= 0) {
-    return undefined;
-  }
-
-  return Math.min(delayMs, 2000);
-}
 
 export async function parseChatCompletionResponse(
   response: Response,
@@ -38,7 +14,7 @@ export async function parseChatCompletionResponse(
   try {
     payload = await response.json();
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbortError(error)) {
       throw error;
     }
     return { ok: false, reason: `${provider}_invalid_response` };

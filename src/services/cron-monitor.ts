@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import { parsePositiveInteger } from "./config";
 import { runTelegramCompensation } from "./telegram-compensation";
 import { logError, logInfo } from "../utils/logging";
 
@@ -6,14 +7,9 @@ export const CRON_LOCK_KEY = "cron:lock";
 
 const DEFAULT_CRON_LOCK_TTL_SECONDS = 240;
 
-export interface ScheduledMaintenanceHooks {
-  compensateTelegram?: () => Promise<void>;
-}
-
 export interface RunScheduledMaintenanceOptions {
   now?: Date;
   cron?: string;
-  hooks?: ScheduledMaintenanceHooks;
 }
 
 export async function runScheduledMaintenance(
@@ -44,18 +40,12 @@ export async function runScheduledMaintenance(
   }
 
   try {
-    await runCompensationHook(getCompensationHook(env, now, options.hooks));
+    await runTelegramCompensation(env, { now });
+  } catch (error) {
+    logError("telegram_compensation_failed", error);
   } finally {
     await releaseCronLock(env.MAIL_KV);
   }
-}
-
-function getCompensationHook(
-  env: Env,
-  now: Date,
-  hooks: ScheduledMaintenanceHooks | undefined
-): () => Promise<void> {
-  return hooks?.compensateTelegram ?? (() => runTelegramCompensation(env, { now }));
 }
 
 async function tryAcquireCronLock(
@@ -89,34 +79,10 @@ async function tryAcquireCronLock(
   }
 }
 
-async function runCompensationHook(
-  hook: (() => Promise<void>) | undefined
-): Promise<void> {
-  if (!hook) {
-    return;
-  }
-
-  try {
-    await hook();
-  } catch (error) {
-    logError("telegram_compensation_failed", error);
-  }
-}
-
 async function releaseCronLock(kv: KVNamespace): Promise<void> {
   try {
     await kv.delete(CRON_LOCK_KEY);
   } catch (error) {
     logError("cron_lock_release_failed", error);
   }
-}
-
-function parsePositiveInteger(value: string | undefined, fallback: number): number {
-  const parsed = Number(value);
-
-  if (Number.isInteger(parsed) && parsed > 0) {
-    return parsed;
-  }
-
-  return fallback;
 }

@@ -17,6 +17,10 @@ export function formatSummaryFailureForTelegram(
 
   const fallback = (() => {
     switch (normalized) {
+    case "summary_skipped_large_email":
+      return "邮件较大，已跳过 AI 摘要";
+    case "summary_parse_failed":
+      return "邮件正文解析失败，无法生成摘要";
     case "summary_config_invalid":
       return "AI 摘要配置异常：SUMMARY_PROVIDER 只能是 openai、openrouter 或 gemini";
     case "openai_config_invalid":

@@ -24,7 +24,6 @@ export type SummaryResult =
 export interface SummaryMailInput {
   to: string;
   text?: string;
-  subject?: string;
 }
 
 export async function generateEmailSummary(

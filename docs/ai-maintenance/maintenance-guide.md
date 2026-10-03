@@ -7,8 +7,8 @@
 | 任务 | 先看 |
 |------|------|
 | 改邮件接收、解析、幂等 | `src/handlers/email.ts`、`processing-id.ts`、`processing-state.ts`、`mime-parser.ts` |
-| 改 Gmail 或备份兜底 | `backup-orchestrator.ts`、`gmail-auth.ts`、`gmail-backup.ts`、`cloudflare-email-fallback.ts`、`resend-fallback.ts` |
-| 改摘要或 Telegram 通知 | `notification-orchestrator.ts`、`email-summary.ts`、`openai-summary.ts`、`openrouter-summary.ts`、`gemini-summary.ts`、`telegram.ts`、`email-cache.ts` |
+| 改 Gmail 或备份兜底 | `backup-orchestrator.ts`、`gmail-auth.ts`、`gmail-backup.ts`、`cloudflare-email-fallback.ts`、`resend-fallback.ts`、`fallback-email-content.ts` |
+| 改摘要或 Telegram 通知 | `notification-orchestrator.ts`、`email-summary.ts`、`summary-request.ts`、`openai-summary.ts`、`openrouter-summary.ts`、`gemini-summary.ts`、`telegram.ts`、`email-cache.ts` |
 | 改 Telegram 按钮 | `telegram-callback.ts`、`telegram.ts`、`email-cache.ts`、`gmail-backup.ts` |
 | 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts` |
 | 改配置 | `src/types.ts`、`config.ts`、`wrangler.example.jsonc`（本机实际配置为被忽略的 `wrangler.jsonc`）、`docs/gmail-oauth-setup.md` |
@@ -28,6 +28,9 @@
 - `handleEmail` 首次状态写入必须初始化 `telegram_done: false`、`telegram_email_id` 和 `telegram_next_retry_at`（telegram_done 已为 true 除外）。备份完成后先保存正文缓存，再进入 `waitUntil`；Cron 需要正文与缓存 ID 才能恢复摘要。正文准备失败时通知入口再尝试一次，不能使原件备份重试。
 - Cron 仅为已完成备份的邮件补偿摘要通知；缓存没有摘要时重新生成，已有摘要时优先复用，并恢复缓存中的摘要结果。备份失败告警按各自状态补偿。摘要失败占位提示应准确反映备份状态。
 - Telegram 失败不在当前 email handler 内循环重试；只记录状态和 `telegram_next_retry_at`。
+- 首次通知和 Cron 补发共用 `notifyEmailSummary`。取得 Telegram 消息编号后，映射或完成状态写入失败必须保存该编号，后续只修复映射与状态；邮件重投不得清空已有摘要缓存。
+- Cron 遇到单封邮件的状态读取或补偿异常时继续处理其他邮件；`backup_done=true` 时不得补发旧的全部备份失败告警。
+- 无 Message-ID 的处理编号必须包含实际 SMTP 收件地址与发件地址，不能仅凭原件哈希合并不同投递。
 - Telegram callback 必须校验 `TG_WEBHOOK_SECRET`、私聊类型、本人 chat id 和点击者 id。
 - 原文经本人 Telegram 私聊 callback 内联提供，读取正文或操作 Gmail 前须校验消息映射归属。
 
@@ -80,7 +83,9 @@ KV 最终一致，以下操作不能提供严格的唯一性或互斥保证：
 1. 按钮通过 `callback_data` 传递 `view_raw`、`back_summary` 或 `trash_gmail`，回调根据消息 ID 查找 KV 映射。
 2. Telegram 消息正文统一走 `sendMessage` / `editMessageText` 且带 `parse_mode: "HTML"`：发送层逐行转义 `< > &`，把验证码行的单反引号码值转换成 `<code>` 供 Telegram 一键复制，其余文本原样保留（含 `\n\n` 空行，保证段落间可读）；callback 提示使用 `answerCallbackQuery.text`。
    发送和编辑统一通过 `renderHtmlMessage` 限长：在 HTML 转义前按 UTF-16 长度保守控制到 4096，按字素边界裁剪，预留截断说明和 `PRIVACY_ROUTE_NOTICE`。缓存保留完整摘要，补发时同样限长。
+   原文 callback 同样交给发送层限长，不提前按字符串下标截断，以免拆开表情或丢失截断说明。所有 Telegram 请求默认 10 秒超时，严重备份失败告警为 2.5 秒；超时必须取消请求，覆盖响应头及正文读取。
 3. `返回摘要` callback 用缓存的可读正文即时请求当前配置的摘要供应商，只更新当前 Telegram 消息，不写回 KV；失败时显示包含脱敏原因的摘要失败提示，备份结果保持有效。
+   首次摘要因解析失败或大邮件被跳过时，沿用缓存中的首次通知文字，不请求 AI。
 4. 删除操作成功时，callback 通知统一显示 `✅ 已删除`。涉及告警文案的改动须同步运维文档。
 5. 「🗑 删邮件+消息」仅在 Gmail 主备份成功、消息映射含 `gmailMessageId` 时出现。先查询 Gmail 邮件状态，404 或已有 `TRASH` 标签时视为 Gmail 处理完成，否则调用 trash；随后删除 Telegram 消息。Gmail 失败保留消息和 KV，并用 `show_alert: true` 提示重试。Telegram 删除失败保留 KV，使用默认非弹窗通知提示重试或手动删除；Bot API 的 48 小时删除限制仍适用。两边处理完成后清理 KV。
 
@@ -93,6 +98,7 @@ KV 最终一致，以下操作不能提供严格的唯一性或互斥保证：
 4. 邮件出现退订/取消订阅/Unsubscribe 等同义提示时，摘要可在模板B最后一行追加退订提醒，但仍不输出 URL。
 5. 三种模式的请求参数、重试上限和部署检查规则见 [配置说明](configuration-and-secrets.md#三种摘要模式)。OpenRouter 的备用模型切换和 ZDR 降级各自会开始新一轮请求；修改时须核对整个摘要调用的请求次数。
 6. 三个客户端的单次 12 秒超时覆盖响应头和响应正文读取；超时取消应返回对应的 `*_timeout`。ZDR 放宽限制后的提示在首次通知、补发与返回摘要中保持一致。
+7. 解析失败或超过解析阈值时不请求 AI，分别记录 `summary_parse_failed`、`summary_skipped_large_email`。占位通知须说明原件已备份及完整内容在邮箱查看。可读正文为空时仍请求摘要，输入只含发件人、收件人、主题和时间。
 
 ## 提交前检查
 

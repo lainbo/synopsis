@@ -36,6 +36,8 @@ pnpm hooks:enable
 3. 执行 `pnpm typecheck` 和 `pnpm build`，确认通过后执行 `pnpm run deploy`；部署命令会检查摘要配置，并在 OpenRouter 模式下完成所需的 reasoning 调整。
 4. 访问 `/health` 确认 HTTP 入口有响应，再通过实际收信确认 Gmail 原件与附件、Telegram 摘要和按钮行为。`/health` 不能验证 KV、发信绑定或外部账号，真实兜底效果也不能由本地模拟代替。
 
+无 Message-ID 的邮件使用 `v2raw:` 处理编号，包含实际 SMTP 收发地址。此前版本的 `v1raw:` 状态不能用于新的编号；升级期间仍在重试的无 Message-ID 邮件可能再备份一次。已有 Message-ID 的邮件继续使用原来的 `v1:` 编号。
+
 需要回退时执行：
 
 ```bash
@@ -88,6 +90,9 @@ git diff --check
 | `邮件备份彻底失败，Cloudflare 将重试投递` | Gmail、Cloudflare Email Sending、Resend 全失败 | 最高优先级，检查三条备份链和 Email Routing retry |
 | `Gmail 授权失效` | refresh token 或 Gmail API 授权异常 | 重新授权并更新 Cloudflare Secret，不记录 secret 值 |
 | `summary_placeholder` | AI 摘要失败，但 Telegram 发送了占位通知 | 先确认原件备份，再看 Telegram 文案中的 sanitized reason/detail、`processing:<id>.summary_error` 和 `summary_error_detail` |
+| `summary_skipped_large_email` / `summary_parse_failed` | 大邮件跳过解析或解析失败，未调用 AI；“返回摘要”也沿用这条说明 | 到备份邮箱查看原件与附件 |
+| `telegram_timeout` | Telegram 请求或响应正文读取超时，已取消本次请求 | 查看通知状态，等待 Cron 补偿；服务端已经接受但未返回结果时仍可能重复发送 |
+| `telegram_compensation_state_failed` | 单封邮件的状态读取或补偿异常，本轮继续处理其他邮件 | 对照处理 ID 排查 KV 状态和后续补偿结果 |
 | `openai_config_invalid` / `openrouter_config_invalid` / `gemini_config_invalid` | 当前摘要模式的配置缺失或无效，未发起摘要请求 | 检查对应的模型、密钥和基础地址；通用模式还需检查 `OPENAI_EXTRA_BODY` |
 | `AI 摘要已切换备用模型` | OpenRouter 主模型出现可切换错误后，备用模型生成摘要成功，通知流程发送模型切换告警 | 检查 OpenRouter 主模型和 ZDR/非 ZDR 路由状态 |
 | `openrouter_http_403` | OpenRouter 拒绝摘要请求；如果 `summary_privacy_downgraded=true`，表示 ZDR 降级后仍失败 | 检查 API key 权限、模型访问权限、余额/额度、OpenRouter provider 路由；短暂抖动可通过 `返回摘要` 重新生成 |
@@ -109,11 +114,13 @@ Cron 默认每 5 分钟触发。`runScheduledMaintenance()` 会：
 
 | 任务 | 计数范围 | 达到上限且仍未完成时 |
 |---|---|---|
-| 邮件摘要通知 | 入站通知失败和后续 Cron 处理共用 `telegram_attempts`；默认首次失败记为 1，后续最多再补偿 2 次 | 尝试发送最终失败告警 |
+| 邮件摘要通知 | 入站通知与后续 Cron 处理共用 `telegram_attempts`，每次处理记录一次，包括成功或映射修复；默认首次失败记为 1，后续最多再补偿 2 次 | 后续 Cron 尝试发送最终失败告警 |
 | Gmail 兜底、全部备份失败告警 | 入站告警和 Cron 补偿共用各自的 `*_alert_attempts` | 尝试发送最终失败告警 |
 | Gmail 授权失效告警 | `gmail:auth_alert.attempts` 记录 Cron 尝试次数 | 停止 Cron 补偿 |
 
 邮件摘要通知只处理 `backup_done=true` 且 `telegram_done=false` 的状态。占位通知成功送达后也会标记完成；用户可通过“返回摘要”再次生成。备份告警按各自的完成状态补偿。
+
+消息已发送但映射或完成状态写入失败时，保留消息编号供后续修复，修复不重发消息。单封邮件异常不阻断其他邮件的扫描。全部备份失败告警还要求备份当前未完成；后续重试备份成功时停止补发该告警，包括对应的最终失败告警。
 
 最终失败告警发送成功后写入有效期 7 天的去重记录；发送或记录失败时，后续 Cron 可能再次尝试。入站处理中的备份告警尝试上限固定为 3，`TELEGRAM_RETRY_LIMIT` 控制 Cron 阶段。
 

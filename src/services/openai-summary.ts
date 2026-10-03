@@ -1,8 +1,19 @@
 import { getApiBaseUrl, getOpenAIExtraBody, getRequiredEnv } from "./config";
-import { parseChatCompletionResponse, parseRetryAfterMs } from "./chat-completions";
+import { parseChatCompletionResponse } from "./chat-completions";
 import { buildSummaryPrompt } from "./summary-prompt";
+import {
+  isAbortError,
+  isRetryableSummaryReason,
+  parseRetryAfterMs,
+  requestSummaryWithRetry,
+  SUMMARY_TIMEOUT_MS,
+  toSummaryResult,
+  type SummaryRequestResult
+} from "./summary-request";
 import type { SummaryMailInput, SummaryResult } from "./email-summary";
 import type { Env } from "../types";
+
+const SUMMARY_FLAGS = { privacyDowngraded: false, fallbackModelUsed: false };
 
 export async function generateOpenAISummary(
   env: Env,
@@ -12,6 +23,7 @@ export async function generateOpenAISummary(
   let apiKey: string;
   let url: string;
   let body: string;
+
   try {
     model = getRequiredEnv(env, "OPENAI_MODEL");
     apiKey = getRequiredEnv(env, "OPENAI_API_KEY");
@@ -23,45 +35,53 @@ export async function generateOpenAISummary(
       stream: false
     });
   } catch {
-    return { ok: false, reason: "openai_config_invalid", privacyDowngraded: false, fallbackModelUsed: false };
+    return { ok: false, reason: "openai_config_invalid", ...SUMMARY_FLAGS };
   }
 
-  let last: SummaryResult = failure("openai_fetch_failed", model);
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 12000);
-    let retryAfterMs = 0;
-    let retryable = true;
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
-        body,
-        signal: controller.signal
-      });
-      if (response.ok) {
-        const parsed = await parseChatCompletionResponse(response, model, "openai");
-        last = { ...parsed, privacyDowngraded: false, fallbackModelUsed: false };
-        if (last.ok) return last;
-        retryable = last.reason !== "openai_blocked";
-      } else {
-        // Compatible services may echo input in errors; keep only the HTTP status.
-        await response.body?.cancel();
-        last = failure(`openai_http_${response.status}`, model);
-        retryable = [408, 409, 425, 429].includes(response.status) || response.status >= 500;
-        retryAfterMs = parseRetryAfterMs(response.headers.get("Retry-After")) ?? 0;
-      }
-    } catch (error) {
-      last = failure(error instanceof Error && error.name === "AbortError" ? "openai_timeout" : "openai_fetch_failed", model);
-    } finally {
-      clearTimeout(timeout);
-    }
-    if (!retryable || attempt === 3) break;
-    if (retryAfterMs) await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
-  }
-  return last;
+  const result = await requestSummaryWithRetry(
+    () => requestSummaryOnce(url, apiKey, body, model),
+    (reason) => isRetryableSummaryReason("openai", reason)
+  );
+
+  return toSummaryResult(result, SUMMARY_FLAGS);
 }
 
-function failure(reason: string, model: string): SummaryResult {
-  return { ok: false, reason, model, privacyDowngraded: false, fallbackModelUsed: false };
+async function requestSummaryOnce(
+  url: string,
+  apiKey: string,
+  body: string,
+  model: string
+): Promise<SummaryRequestResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { authorization: `Bearer ${apiKey}`, "content-type": "application/json" },
+      body,
+      signal: controller.signal
+    });
+
+    if (response.ok) {
+      return await parseChatCompletionResponse(response, model, "openai");
+    }
+
+    // Compatible services may echo input in errors; keep only the HTTP status.
+    await response.body?.cancel();
+    return {
+      ok: false,
+      reason: `openai_http_${response.status}`,
+      model,
+      retryAfterMs: parseRetryAfterMs(response.headers.get("Retry-After"))
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: isAbortError(error) ? "openai_timeout" : "openai_fetch_failed",
+      model
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }

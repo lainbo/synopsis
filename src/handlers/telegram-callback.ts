@@ -11,6 +11,7 @@ import { getRequiredEnv, getTelegramChatId } from "../services/config";
 import { buildSummaryInputText } from "../services/email-readable-text";
 import { trashGmailMessage } from "../services/gmail-backup";
 import { generateEmailSummary } from "../services/email-summary";
+import { isSummarySkipped } from "../services/notification-orchestrator";
 import {
   formatSummaryExceptionForTelegram,
   formatSummaryFailureForTelegram,
@@ -226,12 +227,16 @@ async function regenerateSummaryText(
   env: Env,
   record: EmailCacheRecord
 ): Promise<string> {
+  // 超大或解析失败的邮件没有缓存正文，重新请求 AI 得不到有效摘要，沿用首次通知的说明。
+  if (isSummarySkipped(record.summary)) {
+    return record.summaryText;
+  }
+
   let summary;
 
   try {
     summary = await generateEmailSummary(env, {
       to: record.metadata.to.join(", "),
-      subject: record.metadata.subject,
       text: buildSummaryInputText({
         parse_done: true,
         from: record.metadata.from,
@@ -368,18 +373,5 @@ function buildOriginalText(record: EmailCacheRecord): string {
     record.metadata.date ? `时间: ${record.metadata.date}` : null
   ].filter((line): line is string => Boolean(line));
   const body = record.text || "(无纯文本正文)";
-  let text = `${headerLines.join("\n")}\n\n${body}`;
-
-  // Telegram 的 4096 上限按 entities 解析后的文本计数，HTML 转义不影响长度，
-  // 因此这里直接用原始字符数截断即可。
-  if (text.length > 3900) {
-    const truncationNote = "已截断，完整内容请查看邮箱";
-
-    text = `${headerLines.join("\n")}\n\n${body.slice(
-      0,
-      3500
-    )}\n\n${truncationNote}`;
-  }
-
-  return text.length > 3900 ? text.slice(0, 3900) : text;
+  return `${headerLines.join("\n")}\n\n${body}`;
 }

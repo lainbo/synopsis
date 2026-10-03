@@ -1,6 +1,7 @@
 import { getGmailAccessToken } from "./gmail-auth";
 import { getGmailUserId } from "./config";
 import type { Env } from "../types";
+import { sanitizeErrorReason } from "../utils/error-reason";
 
 const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
 const GMAIL_UPLOAD_API_BASE = "https://gmail.googleapis.com/upload/gmail/v1";
@@ -40,7 +41,7 @@ export async function insertGmailMessage(
   if (!response.ok) {
     throw new GmailBackupError(
       "Gmail message insert failed",
-      await parseErrorReason(response),
+      await parseErrorReason(response, "gmail_insert_failed"),
       response.status
     );
   }
@@ -84,7 +85,7 @@ export async function trashGmailMessage(
   if (!response.ok) {
     throw new GmailBackupError(
       "Gmail message trash failed",
-      await parseErrorReason(response),
+      await parseErrorReason(response, "gmail_trash_failed"),
       response.status
     );
   }
@@ -224,16 +225,16 @@ async function parseInsertResponse(
   };
 }
 
-async function parseErrorReason(response: Response): Promise<string> {
+async function parseErrorReason(response: Response, fallback: string): Promise<string> {
   let payload: unknown;
 
   try {
     payload = await response.json();
   } catch {
-    return "gmail_insert_failed";
+    return fallback;
   }
 
-  return extractReason(payload) ?? "gmail_insert_failed";
+  return extractReason(payload) ?? fallback;
 }
 
 function extractReason(value: unknown): string | null {
@@ -245,27 +246,13 @@ function extractReason(value: unknown): string | null {
   const error = record.error;
 
   if (typeof error === "string") {
-    return sanitizeReason(error);
+    return sanitizeErrorReason(error);
   }
 
   if (error && typeof error === "object") {
     const nested = error as Record<string, unknown>;
-    return sanitizeReason(nested.status) ?? sanitizeReason(nested.reason);
+    return sanitizeErrorReason(nested.status) ?? sanitizeErrorReason(nested.reason);
   }
 
-  return sanitizeReason(record.reason);
-}
-
-function sanitizeReason(value: unknown): string | null {
-  if (typeof value !== "string") {
-    return null;
-  }
-
-  const reason = value.trim();
-
-  if (/^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(reason)) {
-    return reason;
-  }
-
-  return null;
+  return sanitizeErrorReason(record.reason);
 }

@@ -39,6 +39,7 @@ export interface ProcessingState {
     | "email_cache_failed"
     | "send_message_failed"
     | "message_sent_mapping_failed"
+    | "message_sent_state_failed"
     | "done";
   parse_done?: boolean;
   last_error?: string;

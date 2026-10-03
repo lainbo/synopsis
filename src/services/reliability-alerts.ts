@@ -1,19 +1,19 @@
 import { GmailAuthError } from "./gmail-auth";
 import { GmailBackupError } from "./gmail-backup";
 import type { ParsedEmailForProcessing } from "./mime-parser";
+import { TELEGRAM_RETRY_DELAY_MS } from "./config";
 import { sendTelegramMessage, TelegramError } from "./telegram";
 import type { Env } from "../types";
 
 export const GMAIL_AUTH_ALERT_KEY = "gmail:auth_alert";
 
+const CRITICAL_ALERT_TIMEOUT_MS = 2500;
+
 export type ReliabilityAlertResult =
   | { ok: true; messageId: number }
   | { ok: false; reason: string };
 
-export type GmailAuthExpiryReason =
-  | "invalid_grant"
-  | "token_expired_or_revoked"
-  | "gmail_401_after_refresh";
+export type GmailAuthExpiryReason = "invalid_grant" | "gmail_401_after_refresh";
 
 interface GmailAuthAlertState {
   done?: boolean;
@@ -69,9 +69,7 @@ export async function sendCriticalBackupAlert(
     gmailReason: string;
     cloudflareReason: string;
     resendReason: string;
-    backupErrorChain: string;
-  },
-  options: { timeoutMs?: number } = { timeoutMs: 2500 }
+  }
 ): Promise<ReliabilityAlertResult> {
   const text = [
     "邮件备份彻底失败，Cloudflare 将重试投递",
@@ -87,7 +85,7 @@ export async function sendCriticalBackupAlert(
     "请检查 Gmail 授权、Cloudflare Email Sending、Resend 配置。"
   ].join("\n");
 
-  return sendAlertTextWithTimeout(env, text, options.timeoutMs ?? 2500);
+  return sendAlertText(env, text, CRITICAL_ALERT_TIMEOUT_MS);
 }
 
 export async function sendAiSummaryFallbackModelAlert(
@@ -113,14 +111,8 @@ export async function sendAiSummaryFallbackModelAlert(
 export function classifyGmailAuthExpiryReason(
   error: unknown
 ): GmailAuthExpiryReason | null {
-  if (error instanceof GmailAuthError) {
-    if (error.reason === "invalid_grant") {
-      return "invalid_grant";
-    }
-
-    if (isTokenExpiredOrRevoked(error.reason)) {
-      return "token_expired_or_revoked";
-    }
+  if (error instanceof GmailAuthError && error.reason === "invalid_grant") {
+    return "invalid_grant";
   }
 
   if (
@@ -155,15 +147,7 @@ export async function recordGmailAuthAlert(
     return;
   }
 
-  const result = await sendAlertText(
-    env,
-    [
-      "Gmail 授权失效",
-      "",
-      `原因: ${reason}`,
-      "请重新生成 Gmail refresh_token 并更新 Cloudflare Secret。"
-    ].join("\n")
-  );
+  const result = await sendGmailAuthAlert(env, reason);
 
   await putGmailAuthAlertState(env.MAIL_KV, {
     ...base,
@@ -173,16 +157,12 @@ export async function recordGmailAuthAlert(
 }
 
 export async function clearGmailAuthAlert(kv: KVNamespace): Promise<void> {
-  const maybeDelete = (kv as { delete?: (key: string) => Promise<void> }).delete;
-
-  if (typeof maybeDelete === "function") {
-    await maybeDelete.call(kv, GMAIL_AUTH_ALERT_KEY);
-  }
+  await kv.delete(GMAIL_AUTH_ALERT_KEY);
 }
 
 export async function retryGmailAuthAlert(
   env: Env,
-  options: { now?: Date; retryLimit?: number } = {}
+  options: { now: Date; retryLimit: number }
 ): Promise<void> {
   const state = await loadGmailAuthAlertState(env.MAIL_KV);
 
@@ -190,23 +170,14 @@ export async function retryGmailAuthAlert(
     return;
   }
 
-  const now = options.now ?? new Date();
-  const retryLimit = options.retryLimit ?? 3;
+  const { now, retryLimit } = options;
   const attempts = state.attempts ?? 0;
 
   if (attempts >= retryLimit || !isRetryDue(state.next_retry_at, now)) {
     return;
   }
 
-  const result = await sendAlertText(
-    env,
-    [
-      "Gmail 授权失效",
-      "",
-      `原因: ${state.reason}`,
-      "请重新生成 Gmail refresh_token 并更新 Cloudflare Secret。"
-    ].join("\n")
-  );
+  const result = await sendGmailAuthAlert(env, state.reason);
   const nextAttempts = attempts + 1;
 
   await putGmailAuthAlertState(env.MAIL_KV, {
@@ -217,45 +188,53 @@ export async function retryGmailAuthAlert(
     next_retry_at: result.ok
       ? undefined
       : nextAttempts < retryLimit
-        ? new Date(now.getTime() + 300000).toISOString()
+        ? new Date(now.getTime() + TELEGRAM_RETRY_DELAY_MS).toISOString()
         : undefined,
     error: result.ok ? undefined : result.reason
   });
 }
 
+export function isRetryDue(nextRetryAt: string | undefined, now: Date): boolean {
+  if (!nextRetryAt) {
+    return true;
+  }
+
+  const nextRetryMs = Date.parse(nextRetryAt);
+
+  if (!Number.isFinite(nextRetryMs)) {
+    return true;
+  }
+
+  return nextRetryMs <= now.getTime();
+}
+
+async function sendGmailAuthAlert(
+  env: Env,
+  reason: GmailAuthExpiryReason
+): Promise<ReliabilityAlertResult> {
+  return sendAlertText(
+    env,
+    [
+      "Gmail 授权失效",
+      "",
+      `原因: ${reason}`,
+      "请重新生成 Gmail refresh_token 并更新 Cloudflare Secret。"
+    ].join("\n")
+  );
+}
+
 async function sendAlertText(
   env: Env,
-  text: string
+  text: string,
+  timeoutMs?: number
 ): Promise<ReliabilityAlertResult> {
   try {
-    const result = await sendTelegramMessage(env, text);
+    const result = await sendTelegramMessage(env, text, { timeoutMs });
 
     return { ok: true, messageId: result.messageId };
   } catch (error) {
     return { ok: false, reason: getAlertErrorReason(error) };
   }
-}
-
-async function sendAlertTextWithTimeout(
-  env: Env,
-  text: string,
-  timeoutMs: number
-): Promise<ReliabilityAlertResult> {
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  const sendPromise = sendAlertText(env, text);
-  const timeoutPromise = new Promise<ReliabilityAlertResult>((resolve) => {
-    timeoutId = setTimeout(() => {
-      resolve({ ok: false, reason: "telegram_timeout" });
-    }, timeoutMs);
-  });
-
-  const result = await Promise.race([sendPromise, timeoutPromise]);
-
-  if (timeoutId !== undefined) {
-    clearTimeout(timeoutId);
-  }
-
-  return result;
 }
 
 function getAlertErrorReason(error: unknown): string {
@@ -268,28 +247,6 @@ function getAlertErrorReason(error: unknown): string {
   }
 
   return "unknown_error";
-}
-
-function isTokenExpiredOrRevoked(reason: string): boolean {
-  return (
-    reason === "token_expired_or_revoked" ||
-    reason === "expired_or_revoked" ||
-    reason === "Token_expired_or_revoked"
-  );
-}
-
-function isRetryDue(nextRetryAt: string | undefined, now: Date): boolean {
-  if (!nextRetryAt) {
-    return true;
-  }
-
-  const nextRetryMs = Date.parse(nextRetryAt);
-
-  if (!Number.isFinite(nextRetryMs)) {
-    return true;
-  }
-
-  return nextRetryMs <= now.getTime();
 }
 
 function formatRecipients(recipients: string[]): string {

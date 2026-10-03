@@ -1,9 +1,7 @@
 import { getRequiredEnv } from "./config";
+import { buildFallbackEmailContent } from "./fallback-email-content";
 import type { ParsedEmailForProcessing } from "./mime-parser";
 import type { Env } from "../types";
-
-const DEFAULT_TEXT =
-  "原邮件没有可用的纯文本内容，完整原件见附件 original.eml。";
 
 export class CloudflareEmailFallbackError extends Error {
   readonly reason: string;
@@ -24,9 +22,7 @@ export async function sendCloudflareFallback(
   const email = {
     to: getRequiredEnv(env, "BACKUP_EMAIL_TO"),
     from: getRequiredEnv(env, "CF_EMAIL_FROM"),
-    subject: parsed.subject || "(无主题)",
-    text: parsed.text || DEFAULT_TEXT,
-    html: parsed.html || undefined,
+    ...buildFallbackEmailContent(parsed),
     headers: {
       "X-Original-From": parsed.from,
       "X-Original-To": parsed.to.join(", "),
