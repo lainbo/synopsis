@@ -12,11 +12,15 @@ import {
   recordGmailAuthAlert,
   sendCriticalBackupAlert,
   sendFallbackBackupAlert,
+  sendFallbackLoopbackAlert,
   type GmailAuthExpiryReason
 } from "./reliability-alerts";
 import type { ParsedEmailForProcessing } from "./mime-parser";
 import type { Env } from "../types";
 import { logError, logInfo } from "../utils/logging";
+
+const FALLBACK_LOOPBACK_ALERT_PREFIX = "fallback-loopback:alert:";
+const FALLBACK_LOOPBACK_ALERT_TTL_SECONDS = 604800;
 
 export interface BackupEmailParams {
   env: Env;
@@ -186,6 +190,57 @@ export async function backupEmail({
       logError("gmail_auth_alert_failed", error, { processingId, reason });
     });
   }
+}
+
+// 兜底邮件又进入本 Worker 时只写 Gmail，再发兜底只会让副本继续绕回。
+export async function backupFallbackLoopback({
+  env,
+  processingId,
+  rawBytes,
+  parsed
+}: Omit<BackupEmailParams, "state">): Promise<void> {
+  let gmailReason: string | undefined;
+
+  try {
+    await insertGmailMessage(env, rawBytes);
+    logInfo("fallback_loopback_gmail_done", { processingId });
+  } catch (error) {
+    gmailReason = getBackupFailureReason(error);
+    logError("fallback_loopback_gmail_failed", error, { processingId, reason: gmailReason });
+  }
+
+  await sendFallbackLoopbackAlertOnce(env, processingId, parsed, gmailReason).catch((error) => {
+    logError("fallback_loopback_alert_failed", error, { processingId });
+  });
+
+  if (gmailReason) {
+    throw new Error(`backup_failed_fallback_loopback:gmail=${gmailReason}`);
+  }
+}
+
+// 拒收后同一封兜底邮件可能被重投，同一结果只告警一次。
+async function sendFallbackLoopbackAlertOnce(
+  env: Env,
+  processingId: string,
+  parsed: ParsedEmailForProcessing,
+  gmailReason: string | undefined
+): Promise<void> {
+  const dedupeKey = `${FALLBACK_LOOPBACK_ALERT_PREFIX}${processingId}:${gmailReason ? "gmail_failed" : "gmail_done"}`;
+
+  if ((await env.MAIL_KV.get(dedupeKey)) !== null) {
+    return;
+  }
+
+  const alert = await sendFallbackLoopbackAlert(env, parsed, gmailReason);
+
+  if (!alert.ok) {
+    logError("fallback_loopback_alert_failed", alert.reason, { processingId });
+    return;
+  }
+
+  await env.MAIL_KV.put(dedupeKey, "1", {
+    expirationTtl: FALLBACK_LOOPBACK_ALERT_TTL_SECONDS
+  });
 }
 
 function getBackupFailureReason(error: unknown): string {

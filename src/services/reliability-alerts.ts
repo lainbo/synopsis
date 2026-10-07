@@ -88,6 +88,25 @@ export async function sendCriticalBackupAlert(
   return sendAlertText(env, text, CRITICAL_ALERT_TIMEOUT_MS);
 }
 
+export async function sendFallbackLoopbackAlert(
+  env: Env,
+  parsed: ParsedEmailForProcessing,
+  gmailReason?: string
+): Promise<ReliabilityAlertResult> {
+  const text = [
+    "兜底邮件被转回本 Worker",
+    "",
+    `主题: ${parsed.subject || "(无主题)"}`,
+    gmailReason
+      ? `Gmail: 写入失败（${sanitizeAlertReason(gmailReason)}），已拒收这封兜底邮件`
+      : "Gmail: 已写入这封兜底邮件，原件在附件 original.eml 中",
+    "发往 BACKUP_EMAIL_TO 的兜底邮件又进入了本 Worker，兜底备份可能没有保存到独立邮箱。本次未再发送兜底邮件。",
+    "请将 BACKUP_EMAIL_TO 改为不会转回本域名的外部邮箱。"
+  ].join("\n");
+
+  return sendAlertText(env, text, gmailReason ? CRITICAL_ALERT_TIMEOUT_MS : undefined);
+}
+
 export async function sendAiSummaryFallbackModelAlert(
   env: Env,
   details: {

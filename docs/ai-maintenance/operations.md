@@ -87,6 +87,7 @@ git diff --check
 |------|------|------|
 | `Gmail 备份异常（已兜底）` | Gmail 主备份失败，但 Cloudflare Email Sending 或 Resend 已接受带原件附件的发送请求 | 检查 Gmail auth/API，同时确认兜底邮件实际投递结果 |
 | `backup_state_save_failed` 日志 | 供应商已确认成功时，KV 保存失败不会触发另一家备份；通知阶段会再次保存成功结果。全部供应商失败时也可能出现此日志 | 对照同一处理 ID 的 `*_backup_done` / `*_backup_failed` 日志判断实际备份结果，检查 KV 是否持续异常 |
+| `兜底邮件被转回本 Worker` | 本项目发出的兜底邮件又进入本 Worker，兜底备份没有存到独立邮箱；本次只写 Gmail，不再发送兜底邮件。告警写明 Gmail 是否写入，写入失败时已拒收这封副本 | 将 `BACKUP_EMAIL_TO` 改为不会转回本域名的外部邮箱，并验证为 Email Routing 目标地址；Gmail 写入失败时同时检查 Gmail 授权和 API |
 | `邮件备份彻底失败，Cloudflare 将重试投递` | Gmail、Cloudflare Email Sending、Resend 全失败 | 最高优先级，检查三条备份链和 Email Routing retry |
 | `Gmail 授权失效` | refresh token 或 Gmail API 授权异常 | 重新授权并更新 Cloudflare Secret，不记录 secret 值 |
 | `summary_placeholder` | AI 摘要失败，但 Telegram 发送了占位通知 | 先确认原件备份，再看 Telegram 文案中的 sanitized reason/detail、`processing:<id>.summary_error` 和 `summary_error_detail` |

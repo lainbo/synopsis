@@ -1,5 +1,5 @@
-import { buildProcessingId } from "../services/processing-id";
-import { backupEmail } from "../services/backup-orchestrator";
+import { buildProcessingId, isProcessingId } from "../services/processing-id";
+import { backupEmail, backupFallbackLoopback } from "../services/backup-orchestrator";
 import { notifyEmailSummary } from "../services/notification-orchestrator";
 import { getMaxParseBytes, TELEGRAM_RETRY_DELAY_MS } from "../services/config";
 import {
@@ -89,6 +89,17 @@ export async function handleEmail(
     maxParseBytes
   };
 
+  if (isFallbackLoopback(message, env)) {
+    logInfo("fallback_loopback_detected", { processingId });
+    await backupFallbackLoopback({
+      env,
+      processingId,
+      rawBytes: raw.bytes,
+      parsed: parsedForState
+    });
+    return;
+  }
+
   state = await mergeProcessingState(env.MAIL_KV, processingId, {
     ...buildParseStatePatch(parsedForState),
     // 初始化 telegram_done=false，让实例在通知完成前被回收时 Cron 补偿仍能接手；
@@ -138,5 +149,13 @@ export async function handleEmail(
     }).catch((error) => {
       logError("email_notification_failed", error, { processingId });
     })
+  );
+}
+
+// 本项目的兜底邮件都带 X-Processing-Id；收件地址等于 BACKUP_EMAIL_TO 也说明兜底地址路由回了本 Worker。
+function isFallbackLoopback(message: ForwardableEmailMessage, env: Env): boolean {
+  return (
+    isProcessingId(message.headers.get("x-processing-id")) ||
+    message.to.trim().toLowerCase() === env.BACKUP_EMAIL_TO?.trim().toLowerCase()
   );
 }

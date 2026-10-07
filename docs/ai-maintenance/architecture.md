@@ -21,7 +21,9 @@ flowchart TD
   D --> E["buildProcessingId()"]
   E --> F["loadProcessingState()"]
   F --> G["parseMimeEmail() 或 large/degraded parse"]
-  G --> H["保存解析状态、attempt、通知缓存 ID 和补偿时间"]
+  G --> LB{"本项目的兜底邮件被转回?"}
+  LB -- "是" --> LB1["backupFallbackLoopback(): 只写 Gmail，发送回环告警；Gmail 失败时 throw"]
+  LB -- "否" --> H["保存解析状态、attempt、通知缓存 ID 和补偿时间"]
   H --> I["backupEmail()"]
   I --> J["Gmail insert"]
   J --> K{"Gmail 成功?"}
@@ -45,6 +47,8 @@ flowchart TD
 ```
 
 关键点：`backupEmail()` 在 `ctx.waitUntil()` 之前执行。备份失败会影响 Email Routing retry；摘要或 Telegram 失败只写状态，不应让整封邮件重试。
+
+入站邮件带格式合法的 `X-Processing-Id` 邮件头（`v1:` 或 `v2raw:` 加 64 位十六进制），或 SMTP 收件地址等于 `BACKUP_EMAIL_TO` 时，视为本项目发出的兜底邮件被转回本 Worker。此时由 `backupFallbackLoopback()` 只写 Gmail，不发送兜底邮件、不写处理状态、不请求 AI、不发送摘要通知，并发送“兜底邮件被转回本 Worker”告警。告警按处理编号和 Gmail 结果去重；Gmail 写入失败时抛错拒收这封副本。
 
 邮件入口以 Cloudflare `message.to`（SMTP `RCPT TO`）作为本次实际投递的收件地址，写入处理状态的 `to`，并在创建或重建通知缓存时写入缓存的 `to`。摘要首行、原文查看、Cron 补偿及“返回摘要”使用状态或缓存里保存的 `to`，不回头解析邮件头 `To`。邮件头 `To` 缺失、为空地址组或包含其他收件人时也适用。解析出的邮件头和原始 MIME 保持原样。
 
@@ -107,7 +111,7 @@ flowchart TD
 | `gemini-summary.ts` | Gemini `generateContent` 请求、thinking 配置、摘要响应解析 |
 | `summary-request.ts` | 三种摘要模式共用的超时、重试次数、可重试错误判断、`Retry-After` 解析及错误详情脱敏 |
 | `summary-prompt.ts` | 默认中文摘要 prompt 和环境变量覆盖 |
-| `reliability-alerts.ts` | Gmail fallback、critical backup、Gmail auth alert |
+| `reliability-alerts.ts` | Gmail fallback、critical backup、兜底回环、Gmail auth alert |
 | `config.ts` | 环境变量读取与必填校验 |
 | `logging.ts` | 结构化日志输出 |
 | `error-reason.ts` | Gmail 与 Resend 错误原因的格式校验 |
@@ -123,6 +127,7 @@ flowchart TD
 | `gmail:auth_alert` | 无过期时间 | Gmail auth 失效告警状态；Gmail 主备份再次成功时删除 |
 | `cron:lock` | 默认 240s | Cron 防重入锁 |
 | `telegram-compensation:final:*` | 7d | 补偿最终失败 alert dedupe |
+| `fallback-loopback:alert:<processingId>:<gmail_done\|gmail_failed>` | 7d | 兜底回环告警 dedupe，同一封副本重投时同一结果只告警一次 |
 
 ## 状态字段阅读法
 

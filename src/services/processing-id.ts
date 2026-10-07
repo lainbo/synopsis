@@ -1,6 +1,9 @@
 const PROCESSING_ID_VERSION = "v1";
 const RAW_PROCESSING_ID_PREFIX = "v2raw";
 const MISSING_DATE = "missing-date";
+const PROCESSING_ID_PATTERN = new RegExp(
+  `^(${PROCESSING_ID_VERSION}|${RAW_PROCESSING_ID_PREFIX}):[0-9a-f]{64}$`
+);
 
 export async function buildProcessingId(
   message: ForwardableEmailMessage,
@@ -26,6 +29,10 @@ export async function buildProcessingId(
   };
 
   return `${PROCESSING_ID_VERSION}:${await sha256Hex(new TextEncoder().encode(JSON.stringify(payload)))}`;
+}
+
+export function isProcessingId(value: string | null): boolean {
+  return PROCESSING_ID_PATTERN.test(value?.trim() ?? "");
 }
 
 function normalizeMessageId(value: string | null): string {

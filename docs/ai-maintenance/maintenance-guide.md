@@ -21,6 +21,7 @@
 - `state.backup_done=true` 时，重试不能重复写 Gmail 或 fallback；但未完成的 Telegram/alert 仍可补偿。
 - 全部备份 provider 失败时，要记录 `backup_error_chain`，尝试 critical alert，然后抛错触发 Cloudflare retry。
 - Gmail 主备份失败但 fallback 成功时，不能抛错触发整封邮件重试；应记录 fallback 状态并发送/补偿告警。
+- 识别为本项目兜底邮件转回的入站邮件，只能写 Gmail，不得再次发送兜底邮件，也不写处理状态、不请求 AI；Gmail 失败时抛错拒收。识别条件见 [架构](architecture.md#主流程)。
 - 供应商发送的 `try/catch` 只包含发送调用；备份成功后的 KV 保存失败不能触发下一家供应商。成功结果保留在当前处理状态中，后续通知写入会再次保存该结果。
 - 处理状态、邮件缓存和消息映射写入通过 `putKvValue` 处理 429：等待 1 秒后重试一次，其他错误直接交给调用方。摘要与 Telegram 结果合并写入处理状态。
 - Gmail insert 走 `/upload/.../messages?uploadType=multipart`（multipart/related，JSON metadata + `message/rfc822` 原始字节），不把整封原件放进 JSON 的 `raw` 字段，以免体积明显变大。
