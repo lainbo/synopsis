@@ -1,5 +1,9 @@
 import { compile } from "html-to-text";
 import type { ParsedEmailForProcessing } from "./mime-parser";
+import { truncateAtGraphemeBoundary } from "../utils/text-limit";
+
+const MAX_SUMMARY_INPUT_LENGTH = 40000;
+const SUMMARY_INPUT_TRUNCATION_NOTICE = "（邮件内容过长，后续部分已省略）";
 
 const convertHtmlToText = compile({
   wordwrap: false,
@@ -38,10 +42,14 @@ export function buildSummaryInputText(parsed: ParsedEmailForProcessing): string 
   ].filter((line): line is string => Boolean(line));
 
   const body = buildReadableEmailBody(parsed);
-
-  return [...lines, body ? `正文:\n${body}` : null]
+  const input = [...lines, body ? `正文:\n${body}` : null]
     .filter((line): line is string => Boolean(line))
     .join("\n\n");
+
+  // 限制单封邮件交给 AI 的内容量，控制超长邮件产生的模型费用。
+  return input.length > MAX_SUMMARY_INPUT_LENGTH
+    ? `${truncateAtGraphemeBoundary(input, MAX_SUMMARY_INPUT_LENGTH).trimEnd()}\n\n${SUMMARY_INPUT_TRUNCATION_NOTICE}`
+    : input;
 }
 
 function htmlToReadableText(html: string): string {

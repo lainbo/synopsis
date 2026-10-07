@@ -1,7 +1,9 @@
 import type { Env } from "../types";
+import { truncateAtGraphemeBoundary } from "../utils/text-limit";
 
 const MAIL_TO_PLACEHOLDER = "{{MAIL_TO}}";
 const EMAIL_TEXT_PLACEHOLDER = "{{EMAIL_TEXT}}";
+const MAX_MAIL_TO_LENGTH = 1000;
 
 export const DEFAULT_SUMMARY_PROMPT = `
 你是一个邮件摘要助手。
@@ -66,13 +68,22 @@ export interface SummaryPromptMail {
 
 export function buildSummaryPrompt(env: Env, mail: SummaryPromptMail): string {
   const template = env.SUMMARY_PROMPT?.trim() || DEFAULT_SUMMARY_PROMPT;
+  const to = limitMailTo(mail.to);
   const prompt = template.replace(/\{\{(MAIL_TO|EMAIL_TEXT)\}\}/g, (_, name: string) =>
-    name === "MAIL_TO" ? mail.to : mail.text || ""
+    name === "MAIL_TO" ? to : mail.text || ""
   );
 
   if (template.includes(EMAIL_TEXT_PLACEHOLDER)) {
     return prompt;
   }
 
-  return `${prompt}\n\n收件人: ${mail.to}\n邮件内容：\n<<<EMAIL_CONTENT_START>>>\n${mail.text || ""}\n<<<EMAIL_CONTENT_END>>>`;
+  return `${prompt}\n\n收件人: ${to}\n邮件内容：\n<<<EMAIL_CONTENT_START>>>\n${mail.text || ""}\n<<<EMAIL_CONTENT_END>>>`;
+}
+
+// 收件人来自邮件头且会在提示词中出现多次，单独限长，避免绕过摘要输入上限。
+function limitMailTo(to: string): string {
+  if (to.length <= MAX_MAIL_TO_LENGTH) return to;
+  const head = truncateAtGraphemeBoundary(to, MAX_MAIL_TO_LENGTH);
+  const cut = head.lastIndexOf(", ");
+  return `${cut > 0 ? head.slice(0, cut) : head} 等`;
 }

@@ -1,6 +1,7 @@
 import { getRequiredEnv, getTelegramChatId } from "./config";
 import { PRIVACY_ROUTE_NOTICE } from "./summary-error-text";
 import type { Env } from "../types";
+import { truncateAtGraphemeBoundary } from "../utils/text-limit";
 
 export class TelegramError extends Error {
   readonly reason: string;
@@ -172,16 +173,8 @@ function limitMessageText(text: string): string {
   const hasPrivacyNotice = text.endsWith(PRIVACY_ROUTE_NOTICE);
   const body = hasPrivacyNotice ? text.slice(0, -PRIVACY_ROUTE_NOTICE.length).trimEnd() : text;
   const suffix = `\n\n${TELEGRAM_TRUNCATION_NOTICE}${hasPrivacyNotice ? `\n\n${PRIVACY_ROUTE_NOTICE}` : ""}`;
-  const limit = TELEGRAM_MESSAGE_LIMIT - suffix.length;
-  let end = 0;
-
-  // 在 HTML 转义前按 UTF-16 长度保守计数，裁剪位置保留完整字素（含组合表情）。
-  for (const part of new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(body)) {
-    const next = part.index + part.segment.length;
-    if (next > limit) break;
-    end = next;
-  }
-  return body.slice(0, end).trimEnd() + suffix;
+  // 在 HTML 转义前保守计数。
+  return truncateAtGraphemeBoundary(body, TELEGRAM_MESSAGE_LIMIT - suffix.length).trimEnd() + suffix;
 }
 
 function renderHtmlLine(line: string): string {
