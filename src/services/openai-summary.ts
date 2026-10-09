@@ -29,6 +29,7 @@ export async function generateOpenAISummary(
     apiKey = getRequiredEnv(env, "OPENAI_API_KEY");
     url = `${getApiBaseUrl(env.OPENAI_BASE_URL, "https://api.openai.com/v1")}/chat/completions`;
     body = JSON.stringify({
+      reasoning_effort: "low",
       ...getOpenAIExtraBody(env),
       model,
       messages: [{ role: "user", content: buildSummaryPrompt(env, { to: mail.to, text: mail.text || "" }) }],

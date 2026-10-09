@@ -1,21 +1,10 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
 
 const OPENROUTER_MODELS_URL =
   process.env.OPENROUTER_MODELS_URL || "https://openrouter.ai/api/v1/models";
 const WRANGLER_CONFIG_PATH = join(process.cwd(), "wrangler.jsonc");
-const FIX = process.argv.includes("--fix");
-const REASONING_CONFIG_COMMENT =
-  "    // OPENROUTER_REASONING_EFFORT 和 OPENROUTER_REASONING_EXCLUDE 由 pnpm run deploy 根据 OpenRouter 模型接口能力自动维护，通常不要手动修改。";
-const SUPPORTED_REASONING_EFFORTS = new Set([
-  "xhigh",
-  "high",
-  "medium",
-  "low",
-  "minimal",
-  "none"
-]);
 
 async function main() {
   const config = await readWranglerConfig();
@@ -51,13 +40,10 @@ async function main() {
   }
 
   const modelIds = collectModelIds(vars);
-  const configuredReasoningEffort = parseOptionalString(vars.OPENROUTER_REASONING_EFFORT);
 
   if (!parseOptionalString(vars.OPENROUTER_MODEL)) {
     fail("OPENROUTER_MODEL 未配置，无法校验 OpenRouter 摘要模型。");
   }
-
-  validateReasoningConfig(vars, configuredReasoningEffort);
 
   const models = await fetchOpenRouterModels();
   const missingModels = modelIds.filter((modelId) => !models.has(modelId));
@@ -71,52 +57,11 @@ async function main() {
     );
   }
 
-  const unsupportedReasoningModels = modelIds.filter((modelId) => {
-    const parameters = models.get(modelId)?.supportedParameters ?? [];
-
-    return !parameters.includes("reasoning");
-  });
-  const allModelsSupportReasoning = unsupportedReasoningModels.length === 0;
-  const desiredReasoningEffort = allModelsSupportReasoning
-    ? configuredReasoningEffort ?? "minimal"
-    : undefined;
-  const desiredReasoningExclude = allModelsSupportReasoning
-    ? parseBooleanString(vars.OPENROUTER_REASONING_EXCLUDE, true)
-    : undefined;
-
-  const updatedConfig = applyReasoningVars(config, {
-    effort: desiredReasoningEffort,
-    exclude: desiredReasoningExclude
-  });
-
-  if (JSON.stringify(updatedConfig.vars ?? {}) !== JSON.stringify(vars)) {
-    if (!FIX) {
-      fail("OpenRouter reasoning 配置需要调整。检查没有修改文件；pnpm run deploy 会自动调整本地私有配置后部署。");
-    }
-    await writeWranglerConfig(updatedConfig);
-  }
-
   console.log("OpenRouter 模型配置校验通过：");
   console.log(`- 主模型：${modelIds[0]}`);
 
   if (modelIds[1]) {
     console.log(`- 备用模型：${modelIds[1]}`);
-  }
-
-  if (allModelsSupportReasoning) {
-    console.log("- reasoning：启用");
-    console.log(`- reasoning effort：${desiredReasoningEffort}`);
-    console.log(`- reasoning exclude：${desiredReasoningExclude}`);
-    console.log("- wrangler.jsonc：已确保 reasoning 配置与当前模型能力匹配");
-  } else {
-    console.log("- reasoning：关闭");
-    console.log(
-      [
-        "- 不支持 reasoning 的模型：",
-        ...unsupportedReasoningModels.map((modelId) => `  - ${modelId}`)
-      ].join("\n")
-    );
-    console.log("- 本地配置与模型能力一致。");
   }
 }
 
@@ -153,56 +98,6 @@ function collectModelIds(vars) {
   ].filter((modelId, index, modelIds) => modelId && modelIds.indexOf(modelId) === index);
 }
 
-async function writeWranglerConfig(config) {
-  await writeFile(WRANGLER_CONFIG_PATH, addManagedReasoningComment(config));
-}
-
-function applyReasoningVars(config, reasoning) {
-  const vars = { ...(config.vars ?? {}) };
-
-  if (reasoning.effort) {
-    vars.OPENROUTER_REASONING_EFFORT = reasoning.effort;
-    vars.OPENROUTER_REASONING_EXCLUDE = String(reasoning.exclude ?? true);
-  } else {
-    delete vars.OPENROUTER_REASONING_EFFORT;
-    delete vars.OPENROUTER_REASONING_EXCLUDE;
-  }
-
-  return { ...config, vars };
-}
-
-function addManagedReasoningComment(config) {
-  const text = `${JSON.stringify(config, null, 2)}\n`;
-
-  if (!config.vars?.OPENROUTER_REASONING_EFFORT) {
-    return text;
-  }
-
-  const marker = '    "OPENROUTER_REASONING_EFFORT"';
-
-  if (!text.includes(marker) || text.includes(REASONING_CONFIG_COMMENT)) {
-    return text;
-  }
-
-  return text.replace(marker, `${REASONING_CONFIG_COMMENT}\n${marker}`);
-}
-
-function validateReasoningConfig(vars, reasoningEffort) {
-  if (!reasoningEffort) {
-    return;
-  }
-
-  if (!SUPPORTED_REASONING_EFFORTS.has(reasoningEffort)) {
-    fail(
-      `OPENROUTER_REASONING_EFFORT=${reasoningEffort} 不合法。允许值：${Array.from(
-        SUPPORTED_REASONING_EFFORTS
-      ).join(", ")}。`
-    );
-  }
-
-  parseBooleanString(vars.OPENROUTER_REASONING_EXCLUDE, true);
-}
-
 async function fetchOpenRouterModels() {
   let response;
 
@@ -228,17 +123,10 @@ async function fetchOpenRouterModels() {
     fail("OpenRouter 模型列表响应格式异常：缺少 data 数组。");
   }
 
-  return new Map(
+  return new Set(
     payload.data
       .filter((model) => model && typeof model.id === "string")
-      .map((model) => [
-        model.id,
-        {
-          supportedParameters: Array.isArray(model.supported_parameters)
-            ? model.supported_parameters.filter((parameter) => typeof parameter === "string")
-            : []
-        }
-      ])
+      .map((model) => model.id)
   );
 }
 
@@ -254,26 +142,6 @@ function parseSummaryProvider(value) {
 
 function parseOptionalString(value) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function parseBooleanString(value, defaultValue) {
-  const parsed = parseOptionalString(value);
-
-  if (!parsed) {
-    return defaultValue;
-  }
-
-  const normalized = parsed.toLowerCase();
-
-  if (normalized === "true" || normalized === "1") {
-    return true;
-  }
-
-  if (normalized === "false" || normalized === "0") {
-    return false;
-  }
-
-  fail("OPENROUTER_REASONING_EXCLUDE 只能配置为 true/false 或 1/0。");
 }
 
 function formatError(error) {

@@ -22,10 +22,7 @@ interface OpenRouterRequestBody {
   max_tokens: number;
   temperature: number;
   provider: { zdr: boolean };
-  reasoning?: {
-    effort?: string;
-    exclude?: boolean;
-  };
+  reasoning: { effort: "low"; exclude: true };
 }
 
 type ModelSummaryResult = SummaryRequestResult & {
@@ -124,14 +121,13 @@ async function requestSummaryOnce(
   const timeoutId = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
 
   try {
-    const reasoning = buildReasoningConfig(env);
     const body: OpenRouterRequestBody = {
       model,
       messages: [{ role: "user", content: prompt }],
       max_tokens: 500,
       temperature: 0.2,
       provider: { zdr },
-      ...(reasoning && { reasoning })
+      reasoning: { effort: "low", exclude: true }
     };
 
     const response = await fetch(`${getApiBaseUrl(env.OPENROUTER_BASE_URL, "https://openrouter.ai/api/v1")}/chat/completions`, {
@@ -168,21 +164,6 @@ function getOptionalFallbackModel(env: Env, primaryModel: string): string | unde
   const configured = env.OPENROUTER_FALLBACK_MODEL?.trim();
 
   return configured && configured !== primaryModel ? configured : undefined;
-}
-
-function buildReasoningConfig(env: Env): OpenRouterRequestBody["reasoning"] | undefined {
-  const effort = env.OPENROUTER_REASONING_EFFORT?.trim();
-
-  if (!effort) {
-    return undefined;
-  }
-
-  const configuredExclude = env.OPENROUTER_REASONING_EXCLUDE?.trim().toLowerCase();
-  const exclude = configuredExclude
-    ? configuredExclude === "true" || configuredExclude === "1"
-    : true;
-
-  return { effort, exclude };
 }
 
 function isRetryableOpenRouterReason(reason: string): boolean {

@@ -26,7 +26,6 @@
     // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
     // "OPENROUTER_FALLBACK_MODEL": "YOUR_FALLBACK_MODEL_ID",
     // "OPENROUTER_ZDR": "false",
-    // reasoning 参数由 pnpm run deploy 按模型能力维护，无需预先填写。
 
     // C. Gemini：用本组替换 A 组的模式和模型，配套密钥 GEMINI_API_KEY。
     // "SUMMARY_PROVIDER": "gemini",

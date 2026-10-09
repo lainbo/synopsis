@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev --persist-to .wrangler/state",
-    "deploy": "node scripts/verify-summary-config.mjs --fix && pnpm typecheck && wrangler deploy",
+    "deploy": "node scripts/verify-summary-config.mjs && pnpm typecheck && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "verify:config": "node scripts/verify-summary-config.mjs",
     "build": "wrangler deploy --dry-run --config wrangler.example.jsonc --outdir dist",

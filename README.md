@@ -177,17 +177,15 @@ pnpm exec wrangler secret put RESEND_FROM
 
 ## 部署与验证
 
-使用 OpenRouter 模式部署前，先备份本机的 `wrangler.jsonc`。
-
 ```bash
 pnpm typecheck
 pnpm build
 pnpm run deploy
 ```
 
-- `verify:config` 可用于部署前单独检查配置，不写文件；OpenRouter 模式会查询公开模型列表，reasoning 配置需要调整时会报错。`deploy` 会在上传前完成这项调整。
+- `verify:config` 可用于部署前单独检查配置，不写文件；OpenRouter 模式会查询公开模型列表，确认模型存在。
 - `build` 使用示例配置在本地打包，不上传。
-- `deploy` 检查本机配置，再做类型检查并部署；OpenRouter 模式仅在 reasoning 配置需要调整时重写整个 `wrangler.jsonc`，原有 JSONC 注释会丢掉；配置已匹配时保留原文件。
+- `deploy` 检查本机配置，再做类型检查并部署，不修改 `wrangler.jsonc`。
 
 部署后完成以下设置：
 

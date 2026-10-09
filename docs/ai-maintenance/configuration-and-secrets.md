@@ -66,7 +66,9 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 
 `OPENAI_BASE_URL` 可省略，默认使用 OpenAI 官方地址。认证使用 `OPENAI_API_KEY` Bearer，请求路径追加 `/chat/completions`。
 
-`OPENAI_EXTRA_BODY` 可省略，默认不传扩展参数。填写时使用 JSON 对象字符串，例如 `"{\"max_completion_tokens\":1024}"`。不能覆盖程序管理的 `model`、`messages` 和 `stream`；使用单条 user 消息和非流式请求。`temperature`、token 上限等可选参数由使用者按模型的接口文档填写。
+请求固定发送 `reasoning_effort=low`。该参数只对推理模型有效，不接受该参数的模型可能返回 400。
+
+`OPENAI_EXTRA_BODY` 可省略，默认不传其他扩展参数。填写时使用 JSON 对象字符串，例如 `"{\"max_completion_tokens\":1024}"`。不能覆盖程序管理的 `model`、`messages` 和 `stream`；使用单条 user 消息和非流式请求。`temperature`、token 上限等可选参数由使用者按模型的接口文档填写。
 
 例如通过通用模式访问 OpenRouter，允许填写：
 
@@ -75,11 +77,11 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
   "SUMMARY_PROVIDER": "openai",
   "OPENAI_BASE_URL": "https://openrouter.ai/api/v1",
   "OPENAI_MODEL": "YOUR_OPENROUTER_MODEL_ID",
-  "OPENAI_EXTRA_BODY": "{\"provider\":{\"zdr\":true},\"reasoning\":{\"effort\":\"minimal\",\"exclude\":true}}"
+  "OPENAI_EXTRA_BODY": "{\"provider\":{\"zdr\":true}}"
 }
 ```
 
-此时密钥使用 `OPENAI_API_KEY`。请求始终使用 `OPENAI_MODEL` 指定的模型，额外参数原样发送，重试沿用相同的 ZDR 和 reasoning 设置。配置检查校验模型名、基础地址和额外 JSON 参数。
+此时密钥使用 `OPENAI_API_KEY`。请求始终使用 `OPENAI_MODEL` 指定的模型，额外参数原样发送，重试沿用相同的 ZDR 设置。配置检查校验模型名、基础地址和额外 JSON 参数。
 
 缺少模型或密钥，或填写的基础地址、`OPENAI_EXTRA_BODY` 不合法时返回配置错误。`OPENAI_EXTRA_BODY` 可留空。响应读取 `choices[0].message.content`；空内容、格式异常、输出截断均视为失败。HTTP 错误只报告状态码，防止供应商错误正文泄露输入内容。
 
@@ -105,10 +107,8 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 | `OPENROUTER_BASE_URL` | 使用 `https://openrouter.ai/api/v1` |
 | `OPENROUTER_FALLBACK_MODEL` | 只使用主模型，不切换备用模型 |
 | `OPENROUTER_ZDR` | 不主动要求 ZDR 路由；设为 `true` 或 `1` 时开启下述隐私路由行为 |
-| `OPENROUTER_REASONING_EFFORT` | 由部署命令按模型能力维护，支持时默认 `minimal` |
-| `OPENROUTER_REASONING_EXCLUDE` | 由部署命令按模型能力维护，启用 reasoning 时默认 `true` |
 
-认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=500`、`temperature=0.2`。
+认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=500`、`temperature=0.2` 和 `reasoning: { effort: "low", exclude: true }`。不支持 reasoning 的模型由 OpenRouter 忽略该参数。
 
 配置备用模型后，主模型遇到网络、超时、403/408/409/425/429、5xx、路由不可用、无效响应、空摘要或截断等可切换错误时，下一次请求切备用模型。普通的 401/402 状态错误直接结束请求。通知生成流程会将实际响应模型写入 `summary_model`，并在备用模型生成摘要且通知完成后尝试发送模型切换告警。
 
@@ -125,9 +125,7 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 
 这些是请求次数上限，实际次数取决于错误序列。单次超时 12 秒，覆盖响应头和正文读取；`Retry-After` 最多等待 2 秒。整个调用还受 Worker 执行时间限制。
 
-`pnpm verify:config` 只检查配置和查询模型能力；reasoning 配置需要调整时会报错退出，不写文件。`pnpm run deploy` 会在上传前自动调整本机 `wrangler.jsonc`：主备模型都声明支持 `reasoning` 时，保留已配置 effort（未填默认 `minimal`），exclude 默认 `true`；任一模型不支持时移除两项。仅在配置需要调整时重写整个文件，原有 JSONC 注释会丢掉，部署前先备份；配置已匹配时保留原文件。模型列表代表可用能力，并不保证每条供应商路线支持同样参数。模型不存在会停止部署。模型列表默认访问官方地址，可用本机环境变量 `OPENROUTER_MODELS_URL` 覆盖。
-
-请求使用 `reasoning: { effort, exclude }`。模型能力检查访问公开模型列表；错误详情会脱敏、截断后用于 Telegram/KV 排障。
+`pnpm verify:config` 和 `pnpm run deploy` 会查询公开模型列表，主模型或备用模型不存在时停止，不写文件。模型列表默认访问官方地址，可用本机环境变量 `OPENROUTER_MODELS_URL` 覆盖。错误详情会脱敏、截断后用于 Telegram/KV 排障。
 
 ### Gemini 原生模式
 
@@ -142,7 +140,7 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 
 `GEMINI_BASE_URL` 可省略，默认使用 `https://generativelanguage.googleapis.com/v1beta`；仅使用代理等自定义入口时需要填写。无需配置 OpenAI 或 OpenRouter 的模型、密钥和基础地址。
 
-认证使用 `x-goog-api-key` 请求头，请求路径追加 `/models/{model}:generateContent`。请求发送 `contents[].parts[].text` 和 `generationConfig.maxOutputTokens=2048`；Gemini 3 使用 `thinkingLevel=low`，Gemini 2.5 使用 `thinkingBudget=0`。响应跳过 `thought: true` 的内容，`MAX_TOKENS` 视为截断失败。
+认证使用 `x-goog-api-key` 请求头，请求路径追加 `/models/{model}:generateContent`。请求发送 `contents[].parts[].text`、`generationConfig.maxOutputTokens=2048` 和 `thinkingConfig.thinkingLevel=low`，`GEMINI_MODEL` 需使用支持 `thinkingLevel` 的模型。响应跳过 `thought: true` 的内容，`MAX_TOKENS` 视为截断失败。
 
 提示词被拦截，或响应包含 `SAFETY`、`RECITATION` 等已识别的拒绝原因时，返回 `gemini_blocked` 并结束本次摘要调用；响应中的残留文字不作为成功摘要。
 
@@ -177,6 +175,6 @@ Gmail 主备份成功时不会读取这些配置；Gmail 失败后依次尝试 C
 
 ## 维护约束
 
-配置检查使用 `jsonc-parser` 读取 JSONC。部署命令按所选模式检查配置，并在 OpenRouter 模式下维护本机 reasoning 参数。`TG_WEBHOOK_SECRET`、私聊类型、目标 chat ID、点击者 ID 及消息映射须同时匹配，才允许查看正文或操作 Gmail。
+配置检查使用 `jsonc-parser` 读取 JSONC。部署命令按所选模式检查配置，不修改本机配置文件。`TG_WEBHOOK_SECRET`、私聊类型、目标 chat ID、点击者 ID 及消息映射须同时匹配，才允许查看正文或操作 Gmail。
 
 `back_summary` 使用当前配置重新生成摘要，只更新当前 Telegram 消息，不写回 KV 缓存；摘要失败不能影响原件备份。数据去向及缓存期限见 [隐私说明](../privacy.md)。

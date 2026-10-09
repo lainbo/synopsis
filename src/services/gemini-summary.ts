@@ -32,10 +32,7 @@ interface GeminiRequestBody {
   }>;
   generationConfig: {
     maxOutputTokens: number;
-    thinkingConfig?: {
-      thinkingLevel?: "low";
-      thinkingBudget?: number;
-    };
+    thinkingConfig: { thinkingLevel: "low" };
   };
 }
 
@@ -77,12 +74,11 @@ async function requestSummaryOnce(
   const timeoutId = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
 
   try {
-    const thinkingConfig = buildThinkingConfig(model);
     const body: GeminiRequestBody = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
         maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
-        ...(thinkingConfig && { thinkingConfig })
+        thinkingConfig: { thinkingLevel: "low" }
       }
     };
 
@@ -123,22 +119,6 @@ function normalizeGeminiModelId(model: string): string {
 
 function buildGenerateContentUrl(env: Env, model: string): string {
   return `${getApiBaseUrl(env.GEMINI_BASE_URL, "https://generativelanguage.googleapis.com/v1beta")}/models/${encodeURIComponent(model)}:generateContent`;
-}
-
-function buildThinkingConfig(
-  model: string
-): GeminiRequestBody["generationConfig"]["thinkingConfig"] {
-  const id = model.toLowerCase();
-
-  if (id.startsWith("gemini-3")) {
-    return { thinkingLevel: "low" };
-  }
-
-  if (id.startsWith("gemini-2.5")) {
-    return { thinkingBudget: 0 };
-  }
-
-  return undefined;
 }
 
 async function parseSummaryResponse(

@@ -108,7 +108,7 @@ flowchart TD
 | `email-summary.ts` | 按 `SUMMARY_PROVIDER` 分发到通用 OpenAI 兼容接口、OpenRouter 或 Gemini |
 | `openai-summary.ts` / `chat-completions.ts` | 通用 Chat Completions 请求、参数透传及共用响应解析 |
 | `openrouter-summary.ts` | OpenRouter Chat Completions 请求、ZDR 降级、摘要响应解析 |
-| `gemini-summary.ts` | Gemini `generateContent` 请求、thinking 配置、摘要响应解析 |
+| `gemini-summary.ts` | Gemini `generateContent` 请求（固定低思考）、摘要响应解析 |
 | `summary-request.ts` | 三种摘要模式共用的超时、重试次数、可重试错误判断、`Retry-After` 解析及错误详情脱敏 |
 | `summary-prompt.ts` | 默认中文摘要 prompt 和环境变量覆盖 |
 | `reliability-alerts.ts` | Gmail fallback、critical backup、兜底回环、Gmail auth alert |

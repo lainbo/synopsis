@@ -13,7 +13,7 @@ pnpm run deploy
 
 依赖版本由 lockfile 固定，`pnpm-workspace.yaml` 仅允许 esbuild、workerd 安装脚本。新增依赖时检查来源和所需构建脚本。
 
-`pnpm verify:config` 只检查、不写文件；OpenRouter reasoning 配置需要调整时会报错退出。`pnpm run deploy` 先检查摘要配置；只有 `SUMMARY_PROVIDER=openrouter` 会查询模型能力并自动调整本机私有 `wrangler.jsonc` 的 reasoning 配置。仅在配置需要调整时重写整个文件，原有 JSONC 注释会丢掉，部署前先备份；配置已匹配时保留原文件。通用模式检查模型、地址和额外 JSON 参数，Gemini 检查模型和地址。随后类型检查并部署。
+`pnpm verify:config` 只检查、不写文件。`pnpm run deploy` 先做同样的摘要配置检查：OpenRouter 模式查询公开模型列表确认模型存在，通用模式检查模型、地址和额外 JSON 参数，Gemini 检查模型和地址。随后类型检查并部署，不修改 `wrangler.jsonc`。
 
 ## 自动部署
 
@@ -33,7 +33,7 @@ pnpm hooks:enable
 
 1. 更新前记录当前 Worker 版本 ID，备份本机 `wrangler.jsonc`；本地运行所需的 `.dev.vars` 另行安全保存。
 2. 更新代码并执行 `pnpm install --frozen-lockfile`。继续使用原部署时，保留 Cloudflare 账号、Worker 名称、KV ID、Secrets、发件绑定和 webhook 地址。
-3. 执行 `pnpm typecheck` 和 `pnpm build`，确认通过后执行 `pnpm run deploy`；部署命令会检查摘要配置，并在 OpenRouter 模式下完成所需的 reasoning 调整。
+3. 执行 `pnpm typecheck` 和 `pnpm build`，确认通过后执行 `pnpm run deploy`；部署命令会先检查摘要配置。
 4. 访问 `/health` 确认 HTTP 入口有响应，再通过实际收信确认 Gmail 原件与附件、Telegram 摘要和按钮行为。`/health` 不能验证 KV、发信绑定或外部账号，真实兜底效果也不能由本地模拟代替。
 
 无 Message-ID 的邮件使用 `v2raw:` 处理编号，包含实际 SMTP 收发地址。此前版本的 `v1raw:` 状态不能用于新的编号；升级期间仍在重试的无 Message-ID 邮件可能再备份一次。已有 Message-ID 的邮件继续使用原来的 `v1:` 编号。

@@ -20,9 +20,9 @@
 
 - `wrangler.example.jsonc` 和 `.dev.vars.example` 为公开模板；实际 `wrangler.jsonc`、`.dev.vars` 不提交。
 - 提交前凭据检查使用 `pnpm check:public --staged`，发布前使用 `pnpm check:public --ref <提交>`；不带参数时只检查工作区。
-- 三种摘要模式由 `SUMMARY_PROVIDER` 选择，配置见维护文档。
+- 三种摘要模式由 `SUMMARY_PROVIDER` 选择，均固定使用低思考强度，配置见维护文档。
 - 更新与回滚见 [运维文档](docs/ai-maintenance/operations.md)，数据去向见 [隐私说明](docs/privacy.md)，账号设置见 [Gmail OAuth](docs/gmail-oauth-setup.md) 和 [Telegram](docs/telegram-setup.md)。
-- `pnpm verify:config` 只读；`pnpm run deploy` 可调整本机 OpenRouter reasoning 配置。自动部署需本机主动开启。
+- `pnpm verify:config` 只读；`pnpm run deploy` 先做同样的检查再部署。自动部署需本机主动开启。
 
 ## 快速事实
 
