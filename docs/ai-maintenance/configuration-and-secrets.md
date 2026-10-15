@@ -106,7 +106,7 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 |---|---|
 | `OPENROUTER_BASE_URL` | 使用 `https://openrouter.ai/api/v1` |
 | `OPENROUTER_FALLBACK_MODEL` | 只使用主模型，不切换备用模型 |
-| `OPENROUTER_ZDR` | 不主动要求 ZDR 路由；设为 `true` 或 `1` 时开启下述隐私路由行为 |
+| `OPENROUTER_ZDR` | 请求不携带 `provider` 参数；设为 `true` 或 `1` 时开启下述隐私路由行为 |
 
 认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=500`、`temperature=0.2` 和 `reasoning: { effort: "low", exclude: true }`。不支持 reasoning 的模型由 OpenRouter 忽略该参数。
 
@@ -114,7 +114,7 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 
 `finish_reason=content_filter` 或非空 `message.refusal` 返回 `openrouter_blocked`，结束本次摘要调用，不重试、切换备用模型或放宽 ZDR 限制；响应中的残留文字不作为成功摘要。
 
-`OPENROUTER_ZDR=true` 或 `1` 时优先要求供应商不保留请求数据。主模型遇到 ZDR 路由不可用或 403 时，先切换到已配置的备用模型；未配置备用模型时，在主模型上放宽 ZDR 限制。备用模型遇到相同的路由错误时，在备用模型上放宽限制。Telegram 会显示隐私路由提示，首次通知、Cron 补发及“返回摘要”都适用；通知流程用 `summary_privacy_downgraded` 记录这一行为。账号级限制仍可能继续强制 ZDR，实际数据保留规则取决于最终路由。详见 [OpenRouter 路由设置](https://openrouter.ai/docs/guides/routing/provider-selection)。
+`OPENROUTER_ZDR=true` 或 `1` 时请求携带 `provider: { zdr: true }`，优先要求供应商不保留请求数据；放宽限制后的重试不再携带 `provider`。主模型遇到 ZDR 路由不可用或 403 时，先切换到已配置的备用模型；未配置备用模型时，在主模型上放宽 ZDR 限制。备用模型遇到相同的路由错误时，在备用模型上放宽限制。Telegram 会显示隐私路由提示，首次通知、Cron 补发及“返回摘要”都适用；通知流程用 `summary_privacy_downgraded` 记录这一行为。账号级限制仍可能继续强制 ZDR，实际数据保留规则取决于最终路由。详见 [OpenRouter 路由设置](https://openrouter.ai/docs/guides/routing/provider-selection)。
 
 同一模型、同一 ZDR 设置下，每轮最多尝试 3 次，包含首次请求。配置备用模型时，主模型在首次可切换错误后结束该轮；备用模型和 ZDR 降级分别开始新一轮。ZDR 路由不可用或 403 会立即结束当前 ZDR 轮次，其他瞬时错误按该轮上限重试。整个摘要调用可能达到以下请求次数：
 

@@ -21,7 +21,7 @@ interface OpenRouterRequestBody {
   messages: Array<{ role: "user"; content: string }>;
   max_tokens: number;
   temperature: number;
-  provider: { zdr: boolean };
+  provider?: { zdr: true };
   reasoning: { effort: "low"; exclude: true };
 }
 
@@ -126,7 +126,7 @@ async function requestSummaryOnce(
       messages: [{ role: "user", content: prompt }],
       max_tokens: 500,
       temperature: 0.2,
-      provider: { zdr },
+      provider: zdr ? { zdr: true } : undefined,
       reasoning: { effort: "low", exclude: true }
     };
 
