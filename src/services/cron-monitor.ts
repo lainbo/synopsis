@@ -1,12 +1,18 @@
 import type { Env } from "../types";
 import { parsePositiveInteger } from "./config";
-import { renewGmailDirectWatch, syncGmailDirectMessages } from "./gmail-direct";
+import {
+  getGmailDirectConfig,
+  renewGmailDirectWatch,
+  syncGmailDirectMessages
+} from "./gmail-direct";
 import { runTelegramCompensation } from "./telegram-compensation";
 import { logError, logInfo } from "../utils/logging";
 
 export const CRON_LOCK_KEY = "cron:lock";
 
 const DEFAULT_CRON_LOCK_TTL_SECONDS = 240;
+// 台北时间 12:00。
+const GMAIL_DIRECT_DAILY_SYNC_UTC_HOUR = 4;
 
 export interface RunScheduledMaintenanceOptions {
   now?: Date;
@@ -45,13 +51,17 @@ export async function runScheduledMaintenance(
     await runTelegramCompensation(env, { now }).catch((error) => {
       logError("telegram_compensation_failed", error);
     });
-    const renewed = await renewGmailDirectWatch(env, now).catch((error) => {
+    await renewGmailDirectWatch(env, now).catch((error) => {
       logError("gmail_direct_watch_failed", error);
-      return false;
     });
 
-    // 续期正常每天一次，随后同步一次：直收邮件间隔很长时同步位置不会过期，推送时处理失败的邮件也不必等下一次推送。
-    if (renewed) {
+    // 每天固定同步一次：直收邮件间隔很长时同步位置不会过期，推送时处理失败的邮件也不必等下一次推送。
+    // 计划时间落在整 5 分钟，每天只有整点那一轮命中。
+    if (
+      now.getUTCHours() === GMAIL_DIRECT_DAILY_SYNC_UTC_HOUR &&
+      now.getUTCMinutes() < 5 &&
+      getGmailDirectConfig(env)
+    ) {
       await syncGmailDirectMessages(env, ctx).catch((error) => {
         logError("gmail_direct_sync_failed", error);
       });

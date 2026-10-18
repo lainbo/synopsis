@@ -85,7 +85,7 @@ flowchart TD
   L -- "否" --> N["保留原同步位置，下一次推送或每日 Cron 同步重新拉取"]
 ```
 
-直收邮件的处理编号为 `gmail:<Gmail 消息 ID>`，收件地址取第一个 `Delivered-To` 邮件头，`rawSize` 取 Gmail 的 `sizeEstimate`。状态写入 `backup_done=true`、`backup_provider=gmail`，摘要、Telegram 发送、Cron 补偿和「删邮件+消息」按钮与域名邮件共用同一实现。整条链路对 Gmail 只读，推送入口始终在后台同步前返回 200，Pub/Sub 不会因同步失败重投。Cron 每天续期监听成功后也调用 `syncGmailDirectMessages()`，从读取监听和同步位置开始执行同样的流程，直收邮件间隔很长时同步位置不会因只靠推送更新而过期。
+直收邮件的处理编号为 `gmail:<Gmail 消息 ID>`，收件地址取第一个 `Delivered-To` 邮件头，`rawSize` 取 Gmail 的 `sizeEstimate`。状态写入 `backup_done=true`、`backup_provider=gmail`，摘要、Telegram 发送、Cron 补偿和「删邮件+消息」按钮与域名邮件共用同一实现。整条链路对 Gmail 只读，推送入口始终在后台同步前返回 200，Pub/Sub 不会因同步失败重投。Cron 在计划时间为 UTC 04:00（台北时间 12:00）的那一轮也调用 `syncGmailDirectMessages()`，从读取监听和同步位置开始执行同样的流程，直收邮件间隔很长时同步位置不会因只靠推送更新而过期。
 
 ## 定时补偿流程
 
@@ -102,8 +102,9 @@ flowchart TD
   I --> J["补偿 critical_backup_alert_done=false"]
   J --> K["补偿 gmail:auth_alert.done=false"]
   K --> W["renewGmailDirectWatch(): 已启用直收且监听剩余不足 6 天或配置变化时续期"]
-  W -- "完成续期" --> X["syncGmailDirectMessages(): 同步直收邮件，正常每天一次"]
-  W -- "无需续期或续期失败" --> L["释放 cron:lock"]
+  W --> Y{"已启用直收且计划时间为 UTC 04:00 那一轮?"}
+  Y -- "是" --> X["syncGmailDirectMessages(): 每天同步一次直收邮件"]
+  Y -- "否" --> L["释放 cron:lock"]
   X --> L
 ```
 

@@ -56,12 +56,11 @@ export function getGmailDirectConfig(env: Env): GmailDirectConfig | null {
   return topic ? { topic, label: getRequiredEnv(env, "GMAIL_DIRECT_LABEL") } : null;
 }
 
-// 返回本次是否完成续期；无需续期时返回 false，续期失败时抛出。
-export async function renewGmailDirectWatch(env: Env, now: Date): Promise<boolean> {
+export async function renewGmailDirectWatch(env: Env, now: Date): Promise<void> {
   const config = getGmailDirectConfig(env);
 
   if (!config) {
-    return false;
+    return;
   }
 
   const watch = await env.MAIL_KV.get<GmailDirectWatch>(WATCH_KEY, "json");
@@ -71,7 +70,7 @@ export async function renewGmailDirectWatch(env: Env, now: Date): Promise<boolea
     watch.label === config.label &&
     watch.expiration - now.getTime() > WATCH_RENEW_BEFORE_MS
   ) {
-    return false;
+    return;
   }
 
   try {
@@ -95,7 +94,6 @@ export async function renewGmailDirectWatch(env: Env, now: Date): Promise<boolea
 
     await putKvValue(env.MAIL_KV, WATCH_KEY, JSON.stringify(next));
     logInfo("gmail_direct_watch_renewed", { expiration });
-    return true;
   } catch (error) {
     await sendWatchAlertOnce(env, error);
     throw error;

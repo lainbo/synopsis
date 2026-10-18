@@ -35,7 +35,7 @@
 - 无 Message-ID 的处理编号必须包含实际 SMTP 收件地址与发件地址，不能仅凭原件哈希合并不同投递。
 - Telegram callback 必须校验 `TG_WEBHOOK_SECRET`、私聊类型、本人 chat id 和点击者 id。
 - Gmail 直收链路只能调用 Gmail 读取接口；推送入口校验 `GMAIL_DIRECT_PUSH_SECRET` 后立即返回 200，同步在后台进行。单封邮件失败时不推进同步位置，`history.list` 返回 404 时才从当前位置重置。
-- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次；Cron 只在续期成功后同步，保持每天一次。
+- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次；每日同步只在计划时间为 UTC 04:00（台北时间 12:00）的那一轮执行，与续期结果无关。
 - 原文经本人 Telegram 私聊 callback 内联提供，读取正文或操作 Gmail 前须校验消息映射归属。
 
 ## 并发限制
