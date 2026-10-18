@@ -11,7 +11,7 @@
 | 改 Gmail 直收 | `src/handlers/gmail-push.ts`、`gmail-direct.ts`、`gmail-api.ts`、`mime-parser.ts`、`notification-orchestrator.ts`、`docs/gmail-direct-setup.md` |
 | 改摘要或 Telegram 通知 | `notification-orchestrator.ts`、`email-summary.ts`、`summary-request.ts`、`openai-summary.ts`、`openrouter-summary.ts`、`gemini-summary.ts`、`telegram.ts`、`email-cache.ts` |
 | 改 Telegram 按钮 | `telegram-callback.ts`、`telegram.ts`、`email-cache.ts`、`gmail-backup.ts` |
-| 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts`、`gmail-direct.ts`（监听续期） |
+| 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts`、`gmail-direct.ts`（监听续期和每日同步） |
 | 改配置 | `src/types.ts`、`config.ts`、`wrangler.example.jsonc`（本机实际配置为被忽略的 `wrangler.jsonc`）、`docs/gmail-oauth-setup.md`、`docs/gmail-direct-setup.md` |
 
 ## 不变量清单
@@ -35,7 +35,7 @@
 - 无 Message-ID 的处理编号必须包含实际 SMTP 收件地址与发件地址，不能仅凭原件哈希合并不同投递。
 - Telegram callback 必须校验 `TG_WEBHOOK_SECRET`、私聊类型、本人 chat id 和点击者 id。
 - Gmail 直收链路只能调用 Gmail 读取接口；推送入口校验 `GMAIL_DIRECT_PUSH_SECRET` 后立即返回 200，同步在后台进行。单封邮件失败时不推进同步位置，`history.list` 返回 404 时才从当前位置重置。
-- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次。
+- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次；Cron 只在续期成功后同步，保持每天一次。
 - 原文经本人 Telegram 私聊 callback 内联提供，读取正文或操作 Gmail 前须校验消息映射归属。
 
 ## 并发限制

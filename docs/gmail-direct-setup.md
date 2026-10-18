@@ -16,7 +16,7 @@ flowchart TD
   F --> G["Telegram 通知，可将 Gmail 原件移入垃圾箱"]
 ```
 
-推送内容只用来唤醒同步。Worker 按 Gmail 历史记录逐封处理新增邮件，已处理的邮件按处理状态跳过；处理失败时同步位置不前进，下一次推送会重新拉取。这条链路不调用 Gmail 的写入接口，处理邮件不会引发新的推送循环。
+推送内容只用来唤醒同步。Worker 按 Gmail 历史记录逐封处理新增邮件，已处理的邮件按处理状态跳过；处理失败时同步位置不前进，下一次推送会重新拉取。Cron 每天续期监听后也同步一次，直收邮件相隔很久时同步位置仍会持续更新，处理失败的邮件最晚次日重试。这条链路不调用 Gmail 的写入接口，处理邮件不会引发新的推送循环。
 
 ## 准备
 
@@ -81,7 +81,7 @@ gcloud pubsub subscriptions create YOUR_SUBSCRIPTION --project YOUR_GCP_PROJECT_
 printf %s "$GMAIL_DIRECT_PUSH_SECRET" | pnpm exec wrangler secret put GMAIL_DIRECT_PUSH_SECRET
 ```
 
-然后执行 `pnpm run deploy`。部署后 5 分钟内，Cron 调用 Gmail `users.watch` 建立监听，并在 KV 中记录监听状态和起始位置。监听最长 7 天有效，Cron 每天续期一次。
+然后执行 `pnpm run deploy`。部署后 5 分钟内，Cron 调用 Gmail `users.watch` 建立监听，并在 KV 中记录监听状态和起始位置。监听最长 7 天有效，Cron 每天续期一次，续期后同步一次新增邮件。
 
 ## 4. 验证
 
@@ -95,6 +95,6 @@ printf %s "$GMAIL_DIRECT_PUSH_SECRET" | pnpm exec wrangler secret put GMAIL_DIRE
 
 - 只处理带过滤器标签、通过 SMTP 投递到 Gmail 的新邮件。过滤器建立之前的邮件、手动加标签的邮件不会通知。
 - 本项目的兜底邮件发往这个 Gmail 时，带 `X-Processing-Id` 邮件头，原邮件已经通知过，直收链路会跳过它。
-- 监听续期持续失败时，Telegram 每天最多告警一次；监听到期后直收邮件不再推送。恢复后的下一次推送会从原同步位置补齐，前提是同步位置仍有效。
-- Gmail 历史记录通常至少保留一周。同步位置过期时，Worker 从当前位置重新开始并发送告警，此前未通知的直收邮件不会补发。
+- 监听续期持续失败时，Telegram 每天最多告警一次；期间 Cron 不做每日同步，监听到期后直收邮件不再推送。恢复后 Cron 续期成功时从原同步位置补齐，前提是同步位置仍有效。
+- Gmail 历史记录通常至少保留一周。同步位置每天随 Cron 更新，只有同步或续期连续失败超过保留期才会过期。过期时 Worker 从当前位置重新开始并发送告警，此前未通知的直收邮件不会补发。
 - 并发推送或 KV 最终一致可能导致同一封邮件重复通知，当前实现不提供严格的“恰好一次”保证。

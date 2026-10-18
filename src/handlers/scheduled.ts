@@ -5,10 +5,10 @@ import { logError } from "../utils/logging";
 export async function handleScheduled(
   controller: ScheduledController,
   env: Env,
-  _ctx: ExecutionContext
+  ctx: ExecutionContext
 ): Promise<void> {
   try {
-    await runScheduledMaintenance(env, {
+    await runScheduledMaintenance(env, ctx, {
       cron: controller.cron,
       now: new Date(controller.scheduledTime)
     });

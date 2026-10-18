@@ -31,7 +31,7 @@
 - 入口：`src/index.ts` 暴露 `fetch`、`email`、`scheduled`。
 - HTTP 路由：`src/router.ts`，由 Hono 提供 `/health`、Telegram webhook 和 Gmail 直收推送入口；原文只在本人 Bot 私聊中查看。
 - 邮件入口：`src/handlers/email.ts`。
-- 定时补偿入口：`src/handlers/scheduled.ts` -> `src/services/cron-monitor.ts`，同时续期 Gmail 直收监听。
+- 定时补偿入口：`src/handlers/scheduled.ts` -> `src/services/cron-monitor.ts`，同时续期 Gmail 直收监听，续期后同步一次直收邮件。
 - Gmail 直收入口：`src/handlers/gmail-push.ts` -> `src/services/gmail-direct.ts`，可选功能。
 - 核心状态：Cloudflare KV，主要 key 前缀见架构文档。
 - 使用范围：单个 Gmail 授权账号和本人 Telegram 私聊，后续改动由实际需求或生产问题驱动。

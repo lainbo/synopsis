@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { parsePositiveInteger } from "./config";
-import { renewGmailDirectWatch } from "./gmail-direct";
+import { renewGmailDirectWatch, syncGmailDirectMessages } from "./gmail-direct";
 import { runTelegramCompensation } from "./telegram-compensation";
 import { logError, logInfo } from "../utils/logging";
 
@@ -15,6 +15,7 @@ export interface RunScheduledMaintenanceOptions {
 
 export async function runScheduledMaintenance(
   env: Env,
+  ctx: Pick<ExecutionContext, "waitUntil">,
   options: RunScheduledMaintenanceOptions = {}
 ): Promise<void> {
   const now = options.now ?? new Date();
@@ -44,9 +45,17 @@ export async function runScheduledMaintenance(
     await runTelegramCompensation(env, { now }).catch((error) => {
       logError("telegram_compensation_failed", error);
     });
-    await renewGmailDirectWatch(env, now).catch((error) => {
+    const renewed = await renewGmailDirectWatch(env, now).catch((error) => {
       logError("gmail_direct_watch_failed", error);
+      return false;
     });
+
+    // 续期正常每天一次，随后同步一次：直收邮件间隔很长时同步位置不会过期，推送时处理失败的邮件也不必等下一次推送。
+    if (renewed) {
+      await syncGmailDirectMessages(env, ctx).catch((error) => {
+        logError("gmail_direct_sync_failed", error);
+      });
+    }
   } finally {
     await releaseCronLock(env.MAIL_KV);
   }
