@@ -7,8 +7,9 @@
 - 通过 Gmail API 直接保存原始 MIME，包括邮件头、正文和附件。
 - Telegram 提供中文摘要、验证码复制和可读正文查看。点「原文」后可再点「返回摘要」重新生成。
 - Gmail 主备份成功时，可在本人 Bot 私聊中将对应 Gmail 副本移入垃圾箱并删除 Telegram 消息。
+- 可选：直接发到 Gmail 的邮件经 Pub/Sub 推送后，同样生成摘要、通知同一个 Bot，并可将 Gmail 中的这封邮件移入垃圾箱。
 - Gmail 备份失败时，依次尝试 Cloudflare Email Sending 和 Resend，发送带 `original.eml` 附件的兜底邮件。
-- AI 或 Telegram 失败不影响已经完成的原件备份；定时任务每 5 分钟按状态补发通知和告警。
+- AI 或 Telegram 失败不影响已经完成的原件备份；定时任务每 5 分钟按状态补发通知和告警，启用 Gmail 直收时同时续期监听。
 
 项目面向个人单账号使用，Telegram 仅支持本人私聊。正文缓存和消息映射默认保存 7 天，完整邮件保存在备份邮箱。
 
@@ -41,6 +42,7 @@ Gmail 主备份使用 `users.messages.insert`，写入 OAuth 授权账号。兜�
 | 三选一 | 通用 OpenAI 兼容服务、OpenRouter 或 Gemini 的密钥和模型 | 生成摘要，只需申请所选服务 |
 | 可选兜底 | Cloudflare Email Sending 的已验证发件域名 | Gmail 失败后的第一兜底 |
 | 可选兜底 | Resend 的已验证发件地址及密钥 | Gmail 和 Cloudflare 兜底失败后使用 |
+| 可选 | 关联结算账号的 Google Cloud 项目及 Pub/Sub | Gmail 直收邮件的摘要通知 |
 
 可以先配置 Gmail、Telegram 和一种 AI 服务。正式收信建议至少配好一种兜底；两种都未配置时，Gmail 失败会导致本次原件备份失败。
 
@@ -175,6 +177,8 @@ pnpm exec wrangler secret put RESEND_FROM
 
 `SUMMARY_PROMPT` 默认使用内置中文提示词，`MAX_PARSE_BYTES` 默认 10 MiB，`CRON_LOCK_TTL_SECONDS` 默认 240 秒，`TELEGRAM_RETRY_LIMIT` 默认 3。需要调整时再加入 `wrangler.jsonc` 的 `vars`，完整默认值见 [共用配置](docs/ai-maintenance/configuration-and-secrets.md#共用配置)。
 
+有些服务只接受 Gmail 地址时，可以开启 Gmail 直收通知：Gmail 过滤器给直收邮件加标签，Pub/Sub 推送到 Worker 后生成摘要。需要设置 `GMAIL_DIRECT_TOPIC`、`GMAIL_DIRECT_LABEL` 和 Secret `GMAIL_DIRECT_PUSH_SECRET`，步骤见 [Gmail 直收通知](docs/gmail-direct-setup.md)。
+
 ## 部署与验证
 
 ```bash
@@ -194,7 +198,7 @@ pnpm run deploy
 3. 访问 `https://<你的 Worker 地址>/health`，确认 HTTP 入口有响应。
 4. 发送普通邮件和带附件邮件，确认 Gmail 原件、Telegram 摘要、点「原文」后能查看正文并「返回摘要」，附件能在 Gmail 中查看。
 
-`/health` 只证明程序在响应，不表示 KV、发信绑定或外部账号可用。真实收信才能验证备份和 Telegram。删除按钮只在 Gmail 主备份成功时出现，会将对应 Gmail 副本移入垃圾箱，请只用测试邮件验证。
+`/health` 只证明程序在响应，不表示 KV、发信绑定或外部账号可用。真实收信才能验证备份和 Telegram。删除按钮只在 Gmail 主备份成功或来自 Gmail 直收时出现，会将 Gmail 中对应的邮件移入垃圾箱，请只用测试邮件验证。
 
 ## 使用限制
 

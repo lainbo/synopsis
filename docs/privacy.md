@@ -5,7 +5,8 @@
 | 服务 | 接收的数据与用途 |
 |---|---|
 | Cloudflare Email Routing / Workers | 完整原始邮件，在 Worker 内解析和处理 |
-| Gmail | 原始 MIME 和附件，保存在 OAuth 授权账号 |
+| Gmail | 原始 MIME 和附件，保存在 OAuth 授权账号；启用直收通知时，Worker 读取带过滤器标签的直收邮件 |
+| Google Cloud Pub/Sub | 启用直收通知时转发 Gmail 变化通知，内容为 Gmail 地址和 `historyId`，不含邮件内容；推送地址包含 `GMAIL_DIRECT_PUSH_SECRET` |
 | Cloudflare Email Sending / Resend | 兜底时发送邮件及 `original.eml` 原始附件到 `BACKUP_EMAIL_TO` |
 | 所选 AI 服务及自定义代理 | 可读正文、收发件信息、主题和日期等摘要输入；可能包含验证码和其他敏感信息 |
 | Telegram | 摘要、验证码、告警；点击原文按钮后会显示可读正文及邮件头信息 |
@@ -18,8 +19,9 @@
 - `processing:<id>`：每次写入后 24 小时过期，包含处理状态及邮件元信息；补偿仍在更新时会续期。
 - `email:<uuid>`、`msgmap:<messageId>`：默认 7 天；更新时可能重新计算 TTL。
 - 告警状态和去重记录使用各自期限，详见 [KV 保存期限](ai-maintenance/architecture.md#kv-key-约定)。
+- `gmail-direct:watch`、`gmail-direct:cursor`：启用直收通知时保存监听配置、标签 ID 和同步位置，不过期；停用后可手动删除。
 - Gmail 和 Telegram 的数据按各自服务及用户操作保留。删除 Telegram 消息不会自动删除所有供应商记录。
-- “删邮件+消息”只在 Gmail 主备份成功时出现，将 Gmail 副本移入垃圾箱并删除 Telegram 消息，成功后清理对应正文缓存和映射；不会清除处理状态、兜底邮件、日志或 AI 服务端记录。走 Cloudflare / Resend 兜底时没有这个按钮。
+- “删邮件+消息”只在 Gmail 主备份成功或来自 Gmail 直收时出现，将 Gmail 中的邮件移入垃圾箱并删除 Telegram 消息，成功后清理对应正文缓存和映射；不会清除处理状态、兜底邮件、日志或 AI 服务端记录。走 Cloudflare / Resend 兜底时没有这个按钮。
 
 ## 日志与配置
 
@@ -37,6 +39,7 @@ Wrangler 部署输出可能显示本机 vars、绑定 ID 和发件地址，Cloud
 - 单次摘要请求有超时，整个备份链和通知链仍受平台时间限制。Cron 恢复依赖已成功写入 KV 的状态与缓存。
 - KV 最终一致，状态合并和 Cron 标记不提供严格互斥；并发时可能丢失更新或产生重复处理/通知。当前实现不提供严格的“恰好一次”保证。
 - 邮件到达 Worker 前的拒收或路由问题，需要在 Cloudflare 控制台排查。
+- Gmail 直收通知的限制见 [Gmail 直收通知](gmail-direct-setup.md#限制)。
 - `/health` 只说明 HTTP 入口正在响应，不能验证 KV、发信绑定或外部账号。
 
 维护要求与故障处理见 [维护指南](ai-maintenance/maintenance-guide.md) 和 [运维文档](ai-maintenance/operations.md)。

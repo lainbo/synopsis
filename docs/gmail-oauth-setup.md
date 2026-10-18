@@ -26,7 +26,7 @@ pnpm exec wrangler secret put GMAIL_REFRESH_TOKEN
 
 三个值必须属于同一客户端及授权流程。不要共享 Playground 会话、授权响应截图或含凭据的请求链接。Worker 在运行时刷新 access token，只缓存在内存中。
 
-`gmail.insert` 用于写入 MIME 原件，`gmail.modify` 用于查询状态及移入垃圾箱。撤销授权、修改某些账号设置或触发 Google 令牌规则后，可能需要重新授权。出现 Gmail 授权失效告警时，更新对应 Secret 后观察下一封邮件。
+`gmail.insert` 用于写入 MIME 原件，`gmail.modify` 用于查询状态、移入垃圾箱，以及可选的 [Gmail 直收通知](gmail-direct-setup.md) 读取邮件和建立监听。撤销授权、修改某些账号设置或触发 Google 令牌规则后，可能需要重新授权。出现 Gmail 授权失效告警时，更新对应 Secret 后观察下一封邮件。
 
 ## Cloudflare Email Sending
 

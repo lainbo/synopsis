@@ -7,6 +7,7 @@
 | 基础必填 | Gmail 的 3 项授权信息、Telegram 的 3 项配置、`MAIL_KV` 绑定 | — |
 | AI 三选一 | 所选模式的模型和 API key；`SUMMARY_PROVIDER` 默认 `openai`，其他模式需显式指定 | 另外两家的全部变量；使用官方接口时的 Base URL |
 | 邮件兜底 | 使用哪种兜底，就补齐该服务及共用收件地址的配置 | 暂未使用的兜底服务；正式收信建议至少配好一种 |
+| Gmail 直收通知 | 启用时同时填写主题、标签和推送 token | 不需要直收通知时全部省略 |
 | 共用可选项 | 无 | 提示词、Gmail 用户标识、解析大小、重试次数等均有默认行为 |
 
 例如选 Gemini，只需在基础配置之外设置 `SUMMARY_PROVIDER=gemini`、`GEMINI_MODEL` 和 `GEMINI_API_KEY`。`GEMINI_BASE_URL` 默认使用 Google 官方地址，OpenAI 和 OpenRouter 的配置均可省略。
@@ -160,15 +161,27 @@ Gmail 主备份成功时不会读取这些配置；Gmail 失败后依次尝试 C
 
 这些变量和绑定没有默认值。未配置的兜底在执行到该步骤时会失败，并继续尝试下一家；全部备份失败时会记录失败、尝试 Telegram 告警并让邮件处理报错。两种都未配置时，原件备份完全依赖 Gmail。发信账号设置见 [Gmail 与兜底设置](../gmail-oauth-setup.md)。
 
+## Gmail 直收通知：可选
+
+直接发到 Gmail 的邮件也生成摘要并通知 Telegram。未设置 `GMAIL_DIRECT_TOPIC` 时功能关闭，`/gmail/push` 返回 404，Cron 不调用 Gmail 监听接口。
+
+| 变量 | 配置位置 | 填写内容 |
+|---|---|---|
+| `GMAIL_DIRECT_TOPIC` | `wrangler.jsonc` 的 `vars` | Pub/Sub 主题全名，格式 `projects/YOUR_GCP_PROJECT_ID/topics/YOUR_TOPIC` |
+| `GMAIL_DIRECT_LABEL` | `wrangler.jsonc` 的 `vars` | Gmail 过滤器为直收邮件添加的标签名称；嵌套标签写完整路径 |
+| `GMAIL_DIRECT_PUSH_SECRET` | 本地 `.dev.vars` / 生产 Secret | 自行生成的随机字符串，与 Pub/Sub 推送地址中的 `token` 参数一致 |
+
+设置 `GMAIL_DIRECT_TOPIC` 后，`GMAIL_DIRECT_LABEL` 为必填；缺少时推送入口和 Cron 续期都会报配置错误。修改主题或标签后，下一轮 Cron 重新建立监听。Gmail 过滤器、Pub/Sub 主题授权和推送订阅的设置步骤见 [Gmail 直收通知](../gmail-direct-setup.md)。这些值属于个人账号信息，只写在本机私有配置和 Secrets 中。
+
 ## 共用配置
 
 **以下全部可选，一般无需填写。** 需要调整时加入 `wrangler.jsonc` 的 `vars`。
 
 | 变量 | 省略时的默认值或行为 | 用途 |
 |---|---|---|
-| `GMAIL_USER_ID` | `me` | 原始 MIME 写入 OAuth 授权账号 |
+| `GMAIL_USER_ID` | `me` | 原始 MIME 写入 OAuth 授权账号；Gmail 直收也读取该账号 |
 | `SUMMARY_PROMPT` | 内置中文摘要提示词 | 自定义模板支持 `{{MAIL_TO}}`、`{{EMAIL_TEXT}}`，没放正文占位符时自动追加正文 |
-| `MAX_PARSE_BYTES` | `10485760`（10 MiB） | 只限制 MIME 解析，不限制原始邮件读取和备份 |
+| `MAX_PARSE_BYTES` | `10485760`（10 MiB） | 只限制 MIME 解析，不限制原始邮件读取和备份；Gmail 直收邮件的 `sizeEstimate` 超过该值时不下载原件 |
 | `ENVIRONMENT` | `development`；示例设为 `production` | 仅为健康检查环境标识 |
 | `CRON_LOCK_TTL_SECONDS` | `240` 秒 | KV 防重入标记有效期 |
 | `TELEGRAM_RETRY_LIMIT` | `3` | Cron 补偿采用的尝试次数上限，计数范围见 [运维说明](operations.md#cron-和补偿) |

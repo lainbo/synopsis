@@ -26,6 +26,61 @@ import { formatSummaryFailureForTelegram, withPrivacyRouteNotice } from "./summa
 import type { Env } from "../types";
 import { logError, logInfo } from "../utils/logging";
 
+// 初始化 telegram_done=false，让实例在通知完成前被回收时 Cron 补偿仍能接手；
+// next_retry_at 留出一个重试周期，避免与本次 waitUntil 内的即时通知竞争。
+export function buildTelegramPendingPatch(state: ProcessingState): ProcessingState {
+  if (state.telegram_done === true) {
+    return {};
+  }
+
+  return {
+    telegram_done: false,
+    telegram_email_id: state.telegram_email_id ?? crypto.randomUUID(),
+    telegram_next_retry_at: new Date(Date.now() + TELEGRAM_RETRY_DELAY_MS).toISOString()
+  };
+}
+
+export async function startEmailNotification({
+  env,
+  ctx,
+  processingId,
+  parsed,
+  state
+}: {
+  env: Env;
+  ctx: Pick<ExecutionContext, "waitUntil">;
+  processingId: string;
+  parsed: ParsedEmailForProcessing;
+  state: ProcessingState;
+}): Promise<void> {
+  if (state.telegram_done === true) {
+    return;
+  }
+
+  let cache: CreateEmailCacheEntryResult | undefined;
+  try {
+    cache = await getOrCreateEmailCacheEntry(env.MAIL_KV, {
+      emailId: state.telegram_email_id!,
+      parsed,
+      summaryText: ""
+    });
+  } catch (error) {
+    logError("email_cache_prepare_failed", error, { processingId });
+  }
+
+  ctx.waitUntil(
+    notifyEmailSummary({
+      env,
+      processingId,
+      parsed,
+      state,
+      cache
+    }).catch((error) => {
+      logError("email_notification_failed", error, { processingId });
+    })
+  );
+}
+
 export interface NotifyEmailSummaryParams {
   env: Env;
   processingId: string;

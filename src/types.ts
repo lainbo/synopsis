@@ -23,6 +23,9 @@ export interface Env {
   TG_BOT_TOKEN: string;
   TG_CHAT_ID: string;
   GMAIL_USER_ID?: string;
+  GMAIL_DIRECT_TOPIC?: string;
+  GMAIL_DIRECT_LABEL?: string;
+  GMAIL_DIRECT_PUSH_SECRET?: string;
   TG_WEBHOOK_SECRET?: string;
   MAX_PARSE_BYTES?: string;
   OPENROUTER_ZDR?: string;

@@ -21,7 +21,7 @@
 - `wrangler.example.jsonc` 和 `.dev.vars.example` 为公开模板；实际 `wrangler.jsonc`、`.dev.vars` 不提交。
 - 提交前凭据检查使用 `pnpm check:public --staged`，发布前使用 `pnpm check:public --ref <提交>`；不带参数时只检查工作区。
 - 三种摘要模式由 `SUMMARY_PROVIDER` 选择，均固定使用低思考强度，配置见维护文档。
-- 更新与回滚见 [运维文档](docs/ai-maintenance/operations.md)，数据去向见 [隐私说明](docs/privacy.md)，账号设置见 [Gmail OAuth](docs/gmail-oauth-setup.md) 和 [Telegram](docs/telegram-setup.md)。
+- 更新与回滚见 [运维文档](docs/ai-maintenance/operations.md)，数据去向见 [隐私说明](docs/privacy.md)，账号设置见 [Gmail OAuth](docs/gmail-oauth-setup.md)、[Telegram](docs/telegram-setup.md) 和 [Gmail 直收通知](docs/gmail-direct-setup.md)。
 - `pnpm verify:config` 只读；`pnpm run deploy` 先做同样的检查再部署。自动部署需本机主动开启。
 
 ## 快速事实
@@ -29,9 +29,10 @@
 - 语言与运行时：TypeScript + Cloudflare Workers。
 - 包管理器：`pnpm`，锁文件是 `pnpm-lock.yaml`。
 - 入口：`src/index.ts` 暴露 `fetch`、`email`、`scheduled`。
-- HTTP 路由：`src/router.ts`，由 Hono 提供 `/health` 和 Telegram webhook；原文只在本人 Bot 私聊中查看。
+- HTTP 路由：`src/router.ts`，由 Hono 提供 `/health`、Telegram webhook 和 Gmail 直收推送入口；原文只在本人 Bot 私聊中查看。
 - 邮件入口：`src/handlers/email.ts`。
-- 定时补偿入口：`src/handlers/scheduled.ts` -> `src/services/cron-monitor.ts`。
+- 定时补偿入口：`src/handlers/scheduled.ts` -> `src/services/cron-monitor.ts`，同时续期 Gmail 直收监听。
+- Gmail 直收入口：`src/handlers/gmail-push.ts` -> `src/services/gmail-direct.ts`，可选功能。
 - 核心状态：Cloudflare KV，主要 key 前缀见架构文档。
 - 使用范围：单个 Gmail 授权账号和本人 Telegram 私聊，后续改动由实际需求或生产问题驱动。
 

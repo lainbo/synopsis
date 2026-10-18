@@ -34,7 +34,7 @@ pnpm hooks:enable
 1. 更新前记录当前 Worker 版本 ID，备份本机 `wrangler.jsonc`；本地运行所需的 `.dev.vars` 另行安全保存。
 2. 更新代码并执行 `pnpm install --frozen-lockfile`。继续使用原部署时，保留 Cloudflare 账号、Worker 名称、KV ID、Secrets、发件绑定和 webhook 地址。
 3. 执行 `pnpm typecheck` 和 `pnpm build`，确认通过后执行 `pnpm run deploy`；部署命令会先检查摘要配置。
-4. 访问 `/health` 确认 HTTP 入口有响应，再通过实际收信确认 Gmail 原件与附件、Telegram 摘要和按钮行为。`/health` 不能验证 KV、发信绑定或外部账号，真实兜底效果也不能由本地模拟代替。
+4. 访问 `/health` 确认 HTTP 入口有响应，再通过实际收信确认 Gmail 原件与附件、Telegram 摘要和按钮行为；启用 Gmail 直收时，另发一封直收测试邮件确认推送和通知。`/health` 不能验证 KV、发信绑定或外部账号，真实兜底效果也不能由本地模拟代替。
 
 无 Message-ID 的邮件使用 `v2raw:` 处理编号，包含实际 SMTP 收发地址。此前版本的 `v1raw:` 状态不能用于新的编号；升级期间仍在重试的无 Message-ID 邮件可能再备份一次。已有 Message-ID 的邮件继续使用原来的 `v1:` 编号。
 
@@ -102,6 +102,9 @@ git diff --check
 | `gemini_http_429` / `gemini_http_5xx` | Gemini 在代码级最多 3 次尝试后仍失败 | 看 Gemini API 状态和是否持续限流；短暂抖动通常会在摘要重试或 `返回摘要` 时恢复 |
 | `openai_timeout` / `openrouter_timeout` / `gemini_timeout` | 单次请求超过 12 秒，包括响应正文迟迟未完成 | 检查供应商及代理响应时间；客户端按现有重试规则处理，失败提示可通过「返回摘要」重新生成 |
 | `openai_blocked` / `openrouter_blocked` / `gemini_blocked` | 供应商拒绝生成摘要；当前摘要调用立即结束，原件备份不受影响 | Telegram 显示拒绝生成提示，可通过「原文」查看邮件正文；OpenRouter 不因此切换备用模型或放宽 ZDR 限制 |
+| `Gmail 直收监听续期失败` | Cron 调用 Gmail `users.watch` 失败，每天最多告警一次；现有监听到期前仍会推送 | 按告警原因检查 Gmail 授权、`GMAIL_DIRECT_LABEL` 是否与 Gmail 标签名称一致（`gmail_direct_label_not_found`）、Pub/Sub 主题是否存在并授权 `gmail-api-push@system.gserviceaccount.com` 发布 |
+| `Gmail 直收同步位置已过期` | `history.list` 返回 404，同步位置已从当前位置重置 | 在 Gmail 中查看此前未通知的直收邮件；检查是否长时间同步失败 |
+| `gmail_direct_sync_failed` / `gmail_direct_message_failed` 日志 | 直收同步或单封邮件处理失败，同步位置未前进 | 下一次推送会重新拉取；持续出现时检查 Gmail 授权、KV 和日志中的原因码 |
 
 ## Cron 和补偿
 
@@ -109,6 +112,7 @@ Cron 默认每 5 分钟触发。`runScheduledMaintenance()` 会：
 
 - 用 `cron:lock` 降低重复执行概率；KV 标记不提供严格互斥。
 - 每个获得锁的 tick 都跑 Telegram/告警补偿。
+- 启用 Gmail 直收时检查监听状态；剩余有效期不足 6 天、尚未建立或主题、标签配置变化时调用 `users.watch` 续期，正常情况每天一次。续期失败时每 5 分钟重试，告警每天最多一次。
 - 每轮结束释放锁；补偿异常时记录日志并释放锁。
 
 `TELEGRAM_RETRY_LIMIT` 设置 Cron 判断是否继续补偿的尝试次数上限，默认 3。各类任务的计数范围不同：
@@ -132,6 +136,7 @@ Cron 默认每 5 分钟触发。`runScheduledMaintenance()` 会：
 3. 看 Telegram 是否 `telegram_done=true`；如果 false，检查 `telegram_stage`、`telegram_attempts`、`telegram_next_retry_at`。
 4. 看是否有 `fallback_alert_done=false`、`critical_backup_alert_done=false` 或 `gmail:auth_alert.done=false` 等待 Cron。
 5. 如果 Worker 没有收到邮件，在 Cloudflare 控制台检查 Email Routing 活动记录与路由规则。
+6. Gmail 直收邮件没有通知时，先确认邮件带有过滤器标签，再看 `gmail-direct:watch` 的到期时间、`gmail_direct_*` 日志和 Pub/Sub 订阅的推送状态；该邮件的状态位于 `processing:gmail:<Gmail 消息 ID>`。
 
 ## 相关文档
 

@@ -35,3 +35,7 @@ TG_WEBHOOK_SECRET=""
 # Resend：使用时以下两项都必填，RESEND_FROM 使用已验证的发件地址。
 # RESEND_API_KEY=""
 # RESEND_FROM=""
+
+# 4. Gmail 直收通知：可选，启用 GMAIL_DIRECT_TOPIC 时必填。
+# 自行生成随机字符串，Pub/Sub 推送地址的 token 参数使用同一个值；见 docs/gmail-direct-setup.md。
+# GMAIL_DIRECT_PUSH_SECRET=""

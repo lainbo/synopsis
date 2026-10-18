@@ -1,4 +1,5 @@
-import { insertGmailMessage, GmailBackupError } from "./gmail-backup";
+import { insertGmailMessage } from "./gmail-backup";
+import { GmailApiError } from "./gmail-api";
 import { GmailAuthError } from "./gmail-auth";
 import {
   sendCloudflareFallback,
@@ -245,7 +246,7 @@ async function sendFallbackLoopbackAlertOnce(
 
 function getBackupFailureReason(error: unknown): string {
   if (
-    error instanceof GmailBackupError ||
+    error instanceof GmailApiError ||
     error instanceof GmailAuthError ||
     error instanceof CloudflareEmailFallbackError ||
     error instanceof ResendFallbackError

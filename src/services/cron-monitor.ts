@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { parsePositiveInteger } from "./config";
+import { renewGmailDirectWatch } from "./gmail-direct";
 import { runTelegramCompensation } from "./telegram-compensation";
 import { logError, logInfo } from "../utils/logging";
 
@@ -40,9 +41,12 @@ export async function runScheduledMaintenance(
   }
 
   try {
-    await runTelegramCompensation(env, { now });
-  } catch (error) {
-    logError("telegram_compensation_failed", error);
+    await runTelegramCompensation(env, { now }).catch((error) => {
+      logError("telegram_compensation_failed", error);
+    });
+    await renewGmailDirectWatch(env, now).catch((error) => {
+      logError("gmail_direct_watch_failed", error);
+    });
   } finally {
     await releaseCronLock(env.MAIL_KV);
   }

@@ -1,5 +1,5 @@
 import { GmailAuthError } from "./gmail-auth";
-import { GmailBackupError } from "./gmail-backup";
+import { GmailApiError } from "./gmail-api";
 import type { ParsedEmailForProcessing } from "./mime-parser";
 import { TELEGRAM_RETRY_DELAY_MS } from "./config";
 import { sendTelegramMessage, TelegramError } from "./telegram";
@@ -127,6 +127,33 @@ export async function sendAiSummaryFallbackModelAlert(
   return sendAlertText(env, text);
 }
 
+export async function sendGmailDirectWatchAlert(
+  env: Env,
+  error: unknown
+): Promise<ReliabilityAlertResult> {
+  const text = [
+    "Gmail 直收监听续期失败",
+    "",
+    `原因: ${getAlertErrorReason(error)}`,
+    "现有监听到期前仍会推送；持续失败到期后，直接发到 Gmail 的邮件不再通知到 Telegram，域名邮件不受影响。",
+    "请检查 GMAIL_DIRECT_TOPIC、GMAIL_DIRECT_LABEL 和 Pub/Sub 主题授权。"
+  ].join("\n");
+
+  return sendAlertText(env, text);
+}
+
+export async function sendGmailDirectCursorResetAlert(
+  env: Env
+): Promise<ReliabilityAlertResult> {
+  const text = [
+    "Gmail 直收同步位置已过期",
+    "",
+    "已从当前位置重新开始同步，此前未通知的 Gmail 直收邮件不会补发，请在 Gmail 中查看。"
+  ].join("\n");
+
+  return sendAlertText(env, text);
+}
+
 export function classifyGmailAuthExpiryReason(
   error: unknown
 ): GmailAuthExpiryReason | null {
@@ -135,7 +162,7 @@ export function classifyGmailAuthExpiryReason(
   }
 
   if (
-    error instanceof GmailBackupError &&
+    error instanceof GmailApiError &&
     error.reason === "gmail_401_after_refresh"
   ) {
     return "gmail_401_after_refresh";

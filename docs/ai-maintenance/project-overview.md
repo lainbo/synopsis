@@ -4,6 +4,8 @@
 
 Synopsis 为个人域名邮件提供 Gmail 原件备份和 Telegram 通知。邮件先尝试写入 Gmail，失败后依次尝试 Cloudflare Email Sending 和 Resend；AI 摘要或 Telegram 失败不得影响已经完成的备份。
 
+直接发到 Gmail 的邮件可选择通过 Gmail 过滤器标签和 Pub/Sub 推送接入，原件已在 Gmail 中，只生成摘要和 Telegram 通知。
+
 项目支持三种摘要模式、本人 Bot 私聊和可选的本机自动部署。仓库提供示例配置，账号信息由部署者自行填写，生产密钥保存在 Cloudflare Secrets。
 
 ## 技术栈
@@ -13,7 +15,8 @@ Synopsis 为个人域名邮件提供 Gmail 原件备份和 Telegram 通知。邮
 | TypeScript、Cloudflare Workers | 邮件处理与 HTTP、定时任务入口 |
 | Cloudflare Email Routing | 接收域名邮件并交给 Worker |
 | Cloudflare KV | 处理状态、可读正文、消息映射与告警去重记录 |
-| Gmail API | `users.messages.insert` 保存原始 MIME，`trash` 将副本移入垃圾箱 |
+| Gmail API | `users.messages.insert` 保存原始 MIME，`trash` 将备份副本或直收邮件移入垃圾箱；直收通知使用 `users.watch`、`history.list` 和 `messages.get` |
+| Google Cloud Pub/Sub | 可选，把 Gmail 直收邮件的变化推送到 Worker |
 | Cloudflare Email Sending、Resend | 发送带 `original.eml` 的兜底邮件 |
 | Telegram Bot API | 摘要、正文查看、邮件操作和告警 |
 | OpenAI 兼容接口、OpenRouter、Gemini | 按 `SUMMARY_PROVIDER` 选择一种服务生成摘要 |

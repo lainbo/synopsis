@@ -9,6 +9,7 @@
 | `src/handlers/email.ts` | Email Routing 入站邮件处理主入口 |
 | `src/handlers/scheduled.ts` | Cron Trigger 入口 |
 | `src/handlers/telegram-callback.ts` | Telegram inline button callback webhook |
+| `src/handlers/gmail-push.ts` | Gmail 直收通知的 Pub/Sub 推送入口，校验 token 后立即确认并在后台同步 |
 | `src/handlers/health.ts` | JSON 健康检查，只证明 HTTP 入口可响应 |
 
 ## 主流程
@@ -20,7 +21,7 @@ flowchart TD
   C --> D["readRawEmail()"]
   D --> E["buildProcessingId()"]
   E --> F["loadProcessingState()"]
-  F --> G["parseMimeEmail() 或 large/degraded parse"]
+  F --> G["parseEmailForProcessing(): 完整解析或 large/degraded parse"]
   G --> LB{"本项目的兜底邮件被转回?"}
   LB -- "是" --> LB1["backupFallbackLoopback(): 只写 Gmail，发送回环告警；Gmail 失败时 throw"]
   LB -- "否" --> H["保存解析状态、attempt、通知缓存 ID 和补偿时间"]
@@ -35,7 +36,7 @@ flowchart TD
   P --> Q{"Resend 成功?"}
   Q -- "是" --> R["记录 fallback 备份并发送/补偿 Gmail fallback alert"]
   Q -- "否" --> S["记录 backup_error_chain, critical alert, throw 触发 Email Routing retry"]
-  L --> C1["保存通知正文缓存"]
+  L --> C1["startEmailNotification(): 保存通知正文缓存"]
   O --> C1
   R --> C1
   C1 --> T["ctx.waitUntil(notifyEmailSummary())"]
@@ -60,6 +61,32 @@ flowchart TD
 
 首次通知或 Cron 补发取得 Telegram 消息编号后，映射或完成状态写入失败会保存该编号。后续重投、Cron 只修复该消息的映射和状态，不重新发送；修复本身不依赖正文缓存。单封邮件的补偿异常会记录日志，继续扫描其他邮件。备份告警和 Gmail 授权告警分别按自己的状态补偿；备份已经成功时不再补发全部备份失败告警，计数和终止条件见 [运维说明](operations.md#cron-和补偿)。
 
+## Gmail 直收流程
+
+直接投递到 Gmail、不经过 Email Routing 的邮件，由 Gmail 过滤器按 `deliveredto:` 加标签，`users.watch` 只监听该标签并发布到 Pub/Sub。Worker 用 `messages.insert` 写入的备份没有 `Delivered-To` 邮件头，不会被过滤器选中。设置步骤见 [Gmail 直收通知](../gmail-direct-setup.md)。
+
+```mermaid
+flowchart TD
+  A["Pub/Sub 推送 POST /gmail/push"] --> B{"已配置 GMAIL_DIRECT_TOPIC 且 token 匹配?"}
+  B -- "否" --> B1["404 / 401"]
+  B -- "是" --> C["返回 200，ctx.waitUntil(syncGmailDirectMessages())"]
+  C --> D["读取 gmail-direct:watch 和同步位置"]
+  D --> E["history.list: startHistoryId + labelId + messageAdded"]
+  E -- "404 同步位置过期" --> E1["按 profile.historyId 重置同步位置并告警"]
+  E --> F["逐封 ingestGmailDirectMessage()"]
+  F --> G{"processing:gmail:消息ID 已 backup_done?"}
+  G -- "是" --> F
+  G -- "否" --> H["messages.get metadata：跳过 404、SPAM、TRASH 和带 X-Processing-Id 的兜底邮件"]
+  H --> I["parseEmailForProcessing()：未超过解析阈值时读取 format=raw"]
+  I --> J["保存状态：backup_provider=gmail、gmail_message_id 和待通知字段"]
+  J --> K["startEmailNotification()"]
+  F --> L{"全部成功?"}
+  L -- "是" --> M["保存新的同步位置"]
+  L -- "否" --> N["保留原同步位置，下一次推送重新拉取"]
+```
+
+直收邮件的处理编号为 `gmail:<Gmail 消息 ID>`，收件地址取第一个 `Delivered-To` 邮件头，`rawSize` 取 Gmail 的 `sizeEstimate`。状态写入 `backup_done=true`、`backup_provider=gmail`，摘要、Telegram 发送、Cron 补偿和「删邮件+消息」按钮与域名邮件共用同一实现。整条链路对 Gmail 只读，推送入口始终在后台同步前返回 200，Pub/Sub 不会因同步失败重投。
+
 ## 定时补偿流程
 
 ```mermaid
@@ -74,7 +101,8 @@ flowchart TD
   H --> I["补偿 fallback_alert_done=false"]
   I --> J["补偿 critical_backup_alert_done=false"]
   J --> K["补偿 gmail:auth_alert.done=false"]
-  K --> L["释放 cron:lock"]
+  K --> W["renewGmailDirectWatch(): 已启用直收且监听剩余不足 6 天或配置变化时续期"]
+  W --> L["释放 cron:lock"]
 ```
 
 ## HTTP 路由
@@ -83,8 +111,9 @@ flowchart TD
 |------|------|------|
 | `GET /health` | `src/handlers/health.ts` | JSON 健康检查，只证明 HTTP 入口可响应，不检查发信绑定或 Secrets |
 | `POST /telegram/webhook` | `src/handlers/telegram-callback.ts` | Telegram callback webhook，需要 `TG_WEBHOOK_SECRET` |
+| `POST /gmail/push` | `src/handlers/gmail-push.ts` | Pub/Sub 推送入口；未配置 `GMAIL_DIRECT_TOPIC` 时返回 404，查询参数 `token` 与 `GMAIL_DIRECT_PUSH_SECRET` 不一致时返回 401 |
 
-摘要消息提供「原文」按钮；Gmail 主备份成功时另有「删邮件+消息」。点「原文」后当前消息改为可读正文，并出现「返回摘要」。「返回摘要」只更新当前 Telegram 消息，不写回 KV 缓存。完整排版与附件在备份邮箱查看。
+摘要消息提供「原文」按钮；Gmail 主备份成功或来自 Gmail 直收时另有「删邮件+消息」。点「原文」后当前消息改为可读正文，并出现「返回摘要」。「返回摘要」只更新当前 Telegram 消息，不写回 KV 缓存。完整排版与附件在备份邮箱查看。
 
 ## 核心服务模块
 
@@ -93,15 +122,18 @@ flowchart TD
 | `processing-id.ts` | 从 Message-ID、收件人、Date、发件人、raw fallback 构造稳定处理 ID |
 | `processing-state.ts` | `processing:<id>` 状态读写、TTL、阶段字段合并 |
 | `kv-write.ts` | 处理状态、邮件缓存及消息映射的 KV 429 延迟重试 |
-| `mime-parser.ts` | postal-mime 解析与 degraded parse |
+| `mime-parser.ts` | 两条入口共用的 `parseEmailForProcessing()`：解析阈值判断、postal-mime 解析与 degraded parse |
 | `raw-email.ts` | 读取原始邮件 bytes |
 | `backup-orchestrator.ts` | Gmail -> Cloudflare Email Sending -> Resend 备份链路 |
 | `gmail-auth.ts` | Gmail OAuth access token 获取和内存缓存 |
+| `gmail-api.ts` | Gmail API 请求、401 后强制刷新 token 重试一次、错误原因解析 |
 | `gmail-backup.ts` | Gmail `messages.insert`（multipart media upload）和 `trash` |
+| `gmail-direct.ts` | Gmail 直收：`users.watch` 续期、`history.list` 增量同步、读取邮件并进入通知 |
+| `base64url.ts` | Base64 编码与 Gmail `raw` 字段的 base64url 解码 |
 | `cloudflare-email-fallback.ts` | Cloudflare Email Sending 兜底，附带原始 MIME 附件 |
 | `resend-fallback.ts` | Resend 兜底，附带原始 MIME 附件 |
 | `fallback-email-content.ts` | 两条兜底共用的主题、纯文本和 HTML 默认值 |
-| `notification-orchestrator.ts` | 基于预存正文生成摘要、更新缓存、发送 Telegram、合并保存结果 |
+| `notification-orchestrator.ts` | 待通知状态字段、准备正文缓存并启动后台通知；基于预存正文生成摘要、更新缓存、发送 Telegram、合并保存结果 |
 | `telegram-compensation.ts` | Cron 扫描失败状态并补偿通知/告警 |
 | `email-cache.ts` | `email:<uuid>` 缓存、`msgmap:<messageId>` 映射 |
 | `telegram.ts` | Telegram Bot API `sendMessage` / `editMessageText`（`parse_mode: HTML`）、callback response 和 inline keyboard 构造 |
@@ -111,7 +143,7 @@ flowchart TD
 | `gemini-summary.ts` | Gemini `generateContent` 请求（固定低思考）、摘要响应解析 |
 | `summary-request.ts` | 三种摘要模式共用的超时、重试次数、可重试错误判断、`Retry-After` 解析及错误详情脱敏 |
 | `summary-prompt.ts` | 默认中文摘要 prompt 和环境变量覆盖 |
-| `reliability-alerts.ts` | Gmail fallback、critical backup、兜底回环、Gmail auth alert |
+| `reliability-alerts.ts` | Gmail fallback、critical backup、兜底回环、Gmail auth、Gmail 直收监听续期及同步位置重置告警 |
 | `config.ts` | 环境变量读取与必填校验 |
 | `logging.ts` | 结构化日志输出 |
 | `error-reason.ts` | Gmail 与 Resend 错误原因的格式校验 |
@@ -128,6 +160,9 @@ flowchart TD
 | `cron:lock` | 默认 240s | Cron 防重入锁 |
 | `telegram-compensation:final:*` | 7d | 补偿最终失败 alert dedupe |
 | `fallback-loopback:alert:<processingId>:<gmail_done\|gmail_failed>` | 7d | 兜底回环告警 dedupe，同一封副本重投时同一结果只告警一次 |
+| `gmail-direct:watch` | 无过期时间 | Gmail 直收监听的主题、标签名、标签 ID、到期时间和建立监听时的 `historyId` |
+| `gmail-direct:cursor` | 无过期时间 | Gmail 直收同步位置（`historyId`）；缺失时从 `gmail-direct:watch` 的 `historyId` 开始 |
+| `gmail-direct:watch_alert` | 24h | 监听续期失败告警 dedupe，每天最多一次 |
 
 ## 状态字段阅读法
 

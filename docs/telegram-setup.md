@@ -61,6 +61,6 @@ Telegram 会携带 `X-Telegram-Bot-Api-Secret-Token` 请求头。缺少或不匹
 
 - 查看原文：在摘要消息上点「原文」，当前消息改为可读正文；长邮件会截断，完整原件看 Gmail。
 - 返回摘要：出现在原文视图上。用当前 AI 配置重新生成，只改这条 Telegram 消息，不更新 KV 缓存；可能产生额外 API 费用。重新生成依赖尚未过期的正文缓存和消息映射。
-- 删邮件+消息：仅在 Gmail 主备份成功时出现。先将 Gmail 副本移入垃圾箱，再删除 Telegram 消息。走 Cloudflare / Resend 兜底时没有这个按钮，也不会清理兜底邮箱里的副本。Gmail 出错保留消息，Telegram 删除失败保留映射以便重试。缓存有效期 7 天，Telegram 自身的删除时限也会限制操作。
+- 删邮件+消息：仅在 Gmail 主备份成功或来自 [Gmail 直收](gmail-direct-setup.md) 时出现。先将 Gmail 中对应的邮件移入垃圾箱，再删除 Telegram 消息。走 Cloudflare / Resend 兜底时没有这个按钮，也不会清理兜底邮箱里的副本。Gmail 出错保留消息，Telegram 删除失败保留映射以便重试。缓存有效期 7 天，Telegram 自身的删除时限也会限制操作。
 
 Bot 私聊属于 Telegram 云端聊天；正文预览和验证码会进入 Telegram。详见 [隐私说明](privacy.md)。

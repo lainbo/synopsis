@@ -19,4 +19,4 @@
 
 真实配置和凭据仅按当前任务需要读取、使用，不输出秘密值。文档、日志和排障记录只保留脱敏后的必要信息，不复制邮件正文、原始 MIME 或完整供应商响应。
 
-账号设置见 [Gmail OAuth](../gmail-oauth-setup.md) 和 [Telegram](../telegram-setup.md)，数据去向和保存期限见 [隐私说明](../privacy.md)。
+账号设置见 [Gmail OAuth](../gmail-oauth-setup.md)、[Telegram](../telegram-setup.md) 和 [Gmail 直收通知](../gmail-direct-setup.md)，数据去向和保存期限见 [隐私说明](../privacy.md)。

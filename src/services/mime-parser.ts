@@ -1,5 +1,6 @@
 import PostalMime from "postal-mime";
 import type { Address, Email, Header } from "postal-mime";
+import { logError, logInfo } from "../utils/logging";
 
 export interface ParsedEmailForProcessing {
   parse_done: boolean;
@@ -17,7 +18,67 @@ export interface ParsedEmailForProcessing {
   maxParseBytes?: number;
 }
 
-export async function parseMimeEmail(
+interface EmailEnvelope {
+  from: string;
+  to: string;
+  headers: Array<{ key: string; value: string }>;
+}
+
+export async function parseEmailForProcessing({
+  processingId,
+  envelope,
+  rawSize,
+  maxParseBytes,
+  readRaw
+}: {
+  processingId: string;
+  envelope: EmailEnvelope;
+  rawSize: number;
+  maxParseBytes: number;
+  readRaw: () => Promise<Uint8Array>;
+}): Promise<ParsedEmailForProcessing> {
+  let parsed: ParsedEmailForProcessing;
+
+  if (rawSize > maxParseBytes) {
+    parsed = {
+      ...buildHeaderOnlyParsedEmail(envelope),
+      parse_skipped_reason: "skipped_large_email"
+    };
+    logInfo("email_parse_skipped", {
+      processingId,
+      parse_skipped_reason: "skipped_large_email",
+      rawSize,
+      maxParseBytes
+    });
+  } else {
+    const rawBytes = await readRaw();
+
+    try {
+      parsed = await parseMimeEmail(rawBytes);
+    } catch (error) {
+      parsed = buildDegradedParsedEmail(envelope, error);
+      logError("email_parse_failed", error, {
+        processingId,
+        rawSize
+      });
+    }
+  }
+
+  logInfo("email_received", {
+    processingId,
+    rawSize,
+    parse_done: parsed.parse_done
+  });
+
+  return {
+    ...parsed,
+    to: [envelope.to],
+    rawSize,
+    maxParseBytes
+  };
+}
+
+async function parseMimeEmail(
   rawBytes: Uint8Array
 ): Promise<ParsedEmailForProcessing> {
   const parsed: Email = await PostalMime.parse(rawBytes);
@@ -35,30 +96,35 @@ export async function parseMimeEmail(
   };
 }
 
-export function buildHeaderOnlyParsedEmail(
-  message: ForwardableEmailMessage
-): ParsedEmailForProcessing {
+function buildHeaderOnlyParsedEmail(envelope: EmailEnvelope): ParsedEmailForProcessing {
   return {
     parse_done: false,
-    from: message.from,
-    to: [message.to],
-    subject: message.headers.get("subject") || "(无法解析主题)",
+    from: envelope.from,
+    to: [envelope.to],
+    subject: findHeader(envelope.headers, "subject") || "(无法解析主题)",
     text: "",
     html: "",
-    date: message.headers.get("date") || undefined,
-    messageId: message.headers.get("message-id") || undefined,
-    headers: headersToEntries(message.headers)
+    date: findHeader(envelope.headers, "date") || undefined,
+    messageId: findHeader(envelope.headers, "message-id") || undefined,
+    headers: envelope.headers
   };
 }
 
-export function buildDegradedParsedEmail(
-  message: ForwardableEmailMessage,
+function buildDegradedParsedEmail(
+  envelope: EmailEnvelope,
   error: unknown
 ): ParsedEmailForProcessing {
   return {
-    ...buildHeaderOnlyParsedEmail(message),
+    ...buildHeaderOnlyParsedEmail(envelope),
     last_error: `parse_failed:${normalizeErrorMessage(error)}`
   };
+}
+
+export function findHeader(
+  headers: Array<{ key: string; value: string }>,
+  key: string
+): string | undefined {
+  return headers.find((header) => header.key === key)?.value;
 }
 
 function addressToString(address: Address | undefined): string {
@@ -84,7 +150,7 @@ function normalizeHeaders(headers: Header[]): Array<{ key: string; value: string
   }));
 }
 
-function headersToEntries(headers: Headers): Array<{ key: string; value: string }> {
+export function headersToEntries(headers: Headers): Array<{ key: string; value: string }> {
   return Array.from(headers.entries()).map(([key, value]) => ({
     key: key.toLowerCase(),
     value

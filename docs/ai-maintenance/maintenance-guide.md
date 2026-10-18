@@ -7,11 +7,12 @@
 | 任务 | 先看 |
 |------|------|
 | 改邮件接收、解析、幂等 | `src/handlers/email.ts`、`processing-id.ts`、`processing-state.ts`、`mime-parser.ts` |
-| 改 Gmail 或备份兜底 | `backup-orchestrator.ts`、`gmail-auth.ts`、`gmail-backup.ts`、`cloudflare-email-fallback.ts`、`resend-fallback.ts`、`fallback-email-content.ts` |
+| 改 Gmail 或备份兜底 | `backup-orchestrator.ts`、`gmail-auth.ts`、`gmail-api.ts`、`gmail-backup.ts`、`cloudflare-email-fallback.ts`、`resend-fallback.ts`、`fallback-email-content.ts` |
+| 改 Gmail 直收 | `src/handlers/gmail-push.ts`、`gmail-direct.ts`、`gmail-api.ts`、`mime-parser.ts`、`notification-orchestrator.ts`、`docs/gmail-direct-setup.md` |
 | 改摘要或 Telegram 通知 | `notification-orchestrator.ts`、`email-summary.ts`、`summary-request.ts`、`openai-summary.ts`、`openrouter-summary.ts`、`gemini-summary.ts`、`telegram.ts`、`email-cache.ts` |
 | 改 Telegram 按钮 | `telegram-callback.ts`、`telegram.ts`、`email-cache.ts`、`gmail-backup.ts` |
-| 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts` |
-| 改配置 | `src/types.ts`、`config.ts`、`wrangler.example.jsonc`（本机实际配置为被忽略的 `wrangler.jsonc`）、`docs/gmail-oauth-setup.md` |
+| 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts`、`gmail-direct.ts`（监听续期） |
+| 改配置 | `src/types.ts`、`config.ts`、`wrangler.example.jsonc`（本机实际配置为被忽略的 `wrangler.jsonc`）、`docs/gmail-oauth-setup.md`、`docs/gmail-direct-setup.md` |
 
 ## 不变量清单
 
@@ -26,13 +27,15 @@
 - 处理状态、邮件缓存和消息映射写入通过 `putKvValue` 处理 429：等待 1 秒后重试一次，其他错误直接交给调用方。摘要与 Telegram 结果合并写入处理状态。
 - Gmail insert 走 `/upload/.../messages?uploadType=multipart`（multipart/related，JSON metadata + `message/rfc822` 原始字节），不把整封原件放进 JSON 的 `raw` 字段，以免体积明显变大。
 - Cloudflare Email Sending / Resend fallback 必须附带 `original.eml`（原始 MIME）附件；解析被跳过或失败时占位正文不算备份，附件才是。CF binding 附件 `content` 传 `ArrayBuffer`，Resend 传 base64 字符串。Resend 整封邮件上限为 40 MB，包含正文和 Base64 编码后的附件，见 [Resend 附件限制](https://resend.com/docs/dashboard/emails/attachments#attachment-limitations)。Cloudflare Email Sending 整封邮件普通发送上限为 5 MiB，向已验证目标地址发送时为 25 MiB，见 [Email Service limits](https://developers.cloudflare.com/email-service/platform/limits/)；`BACKUP_EMAIL_TO` 应配置为已验证目标才能用到 25 MiB。入站 Email Routing 上限为 25 MiB；原件作为附件重新封装后的兜底邮件仍须满足发送大小限制。
-- `handleEmail` 首次状态写入必须初始化 `telegram_done: false`、`telegram_email_id` 和 `telegram_next_retry_at`（telegram_done 已为 true 除外）。备份完成后先保存正文缓存，再进入 `waitUntil`；Cron 需要正文与缓存 ID 才能恢复摘要。正文准备失败时通知入口再尝试一次，不能使原件备份重试。
+- `handleEmail` 和 Gmail 直收的首次状态写入都通过 `buildTelegramPendingPatch()` 初始化 `telegram_done: false`、`telegram_email_id` 和 `telegram_next_retry_at`（telegram_done 已为 true 除外）。备份完成后先保存正文缓存，再进入 `waitUntil`；Cron 需要正文与缓存 ID 才能恢复摘要。正文准备失败时通知入口再尝试一次，不能使原件备份重试。
 - Cron 仅为已完成备份的邮件补偿摘要通知；缓存没有摘要时重新生成，已有摘要时优先复用，并恢复缓存中的摘要结果。备份失败告警按各自状态补偿。摘要失败占位提示应准确反映备份状态。
 - Telegram 失败不在当前 email handler 内循环重试；只记录状态和 `telegram_next_retry_at`。
 - 首次通知和 Cron 补发共用 `notifyEmailSummary`。取得 Telegram 消息编号后，映射或完成状态写入失败必须保存该编号，后续只修复映射与状态；邮件重投不得清空已有摘要缓存。
 - Cron 遇到单封邮件的状态读取或补偿异常时继续处理其他邮件；`backup_done=true` 时不得补发旧的全部备份失败告警。
 - 无 Message-ID 的处理编号必须包含实际 SMTP 收件地址与发件地址，不能仅凭原件哈希合并不同投递。
 - Telegram callback 必须校验 `TG_WEBHOOK_SECRET`、私聊类型、本人 chat id 和点击者 id。
+- Gmail 直收链路只能调用 Gmail 读取接口；推送入口校验 `GMAIL_DIRECT_PUSH_SECRET` 后立即返回 200，同步在后台进行。单封邮件失败时不推进同步位置，`history.list` 返回 404 时才从当前位置重置。
+- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次。
 - 原文经本人 Telegram 私聊 callback 内联提供，读取正文或操作 Gmail 前须校验消息映射归属。
 
 ## 并发限制
@@ -57,7 +60,7 @@ KV 最终一致，以下操作不能提供严格的唯一性或互斥保证：
 重点核对：
 
 - `backup-orchestrator.ts` 的 provider 顺序、throw 条件、alert 记录。
-- `src/handlers/email.ts` 中通过 `ctx.waitUntil` 执行通知的隔离语义。
+- `startEmailNotification()` 通过 `ctx.waitUntil` 执行通知的隔离语义，域名邮件和 Gmail 直收共用。
 - `telegram-compensation.ts` 的 retry cap、final alert dedupe、mapping repair。
 - `telegram-callback.ts` 的本人私聊校验、消息映射归属、删除和 Gmail trash 行为。
 

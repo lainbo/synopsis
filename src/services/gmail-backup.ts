@@ -1,52 +1,41 @@
-import { getGmailAccessToken } from "./gmail-auth";
-import { getGmailUserId } from "./config";
+import {
+  fetchGmail,
+  GMAIL_UPLOAD_API_BASE,
+  GmailApiError,
+  gmailUserUrl,
+  readGmailJson,
+  toGmailApiError
+} from "./gmail-api";
 import type { Env } from "../types";
-import { sanitizeErrorReason } from "../utils/error-reason";
-
-const GMAIL_API_BASE = "https://gmail.googleapis.com/gmail/v1";
-const GMAIL_UPLOAD_API_BASE = "https://gmail.googleapis.com/upload/gmail/v1";
-
-export class GmailBackupError extends Error {
-  readonly reason: string;
-  readonly status?: number;
-
-  constructor(message: string, reason: string, status?: number) {
-    super(message);
-    this.name = "GmailBackupError";
-    this.reason = reason;
-    this.status = status;
-  }
-}
 
 export async function insertGmailMessage(
   env: Env,
   rawBytes: Uint8Array
 ): Promise<{ id: string; threadId?: string }> {
-  const firstToken = await getGmailAccessToken(env);
-  let response = await postGmailMessage(env, rawBytes, firstToken);
-
-  if (response.status === 401) {
-    const refreshedToken = await getGmailAccessToken(env, { forceRefresh: true });
-    response = await postGmailMessage(env, rawBytes, refreshedToken);
-
-    if (response.status === 401) {
-      throw new GmailBackupError(
-        "Gmail message insert failed",
-        "gmail_401_after_refresh",
-        401
-      );
+  const boundary = createMultipartBoundary();
+  const record = await readGmailJson<{ id?: unknown; threadId?: unknown } | null>(
+    env,
+    "insert",
+    gmailUserUrl(
+      env,
+      "/messages?uploadType=multipart&internalDateSource=dateHeader",
+      GMAIL_UPLOAD_API_BASE
+    ),
+    {
+      method: "POST",
+      headers: { "content-type": `multipart/related; boundary=${boundary}` },
+      body: buildMultipartInsertBody(rawBytes, boundary)
     }
+  );
+
+  if (typeof record?.id !== "string" || record.id.trim() === "") {
+    throw new GmailApiError("Gmail insert failed", "invalid_gmail_insert_response");
   }
 
-  if (!response.ok) {
-    throw new GmailBackupError(
-      "Gmail message insert failed",
-      await parseErrorReason(response, "gmail_insert_failed"),
-      response.status
-    );
-  }
-
-  return parseInsertResponse(response);
+  return {
+    id: record.id.trim(),
+    threadId: typeof record.threadId === "string" ? record.threadId : undefined
+  };
 }
 
 export async function trashGmailMessage(
@@ -56,67 +45,34 @@ export async function trashGmailMessage(
   const normalizedMessageId = messageId.trim();
 
   if (!normalizedMessageId) {
-    throw new GmailBackupError(
-      "Gmail message trash failed",
-      "gmail_trash_message_id_missing"
-    );
+    throw new GmailApiError("Gmail trash failed", "gmail_trash_message_id_missing");
   }
 
-  const firstToken = await getGmailAccessToken(env);
-  let response = await trashGmailMessageById(env, normalizedMessageId, firstToken);
-
-  if (response.status === 401) {
-    const refreshedToken = await getGmailAccessToken(env, { forceRefresh: true });
-    response = await trashGmailMessageById(env, normalizedMessageId, refreshedToken);
-
-    if (response.status === 401) {
-      throw new GmailBackupError(
-        "Gmail message trash failed",
-        "gmail_401_after_refresh",
-        401
-      );
-    }
-  }
-
-  if (response.status === 404) {
-    return;
-  }
-
-  if (!response.ok) {
-    throw new GmailBackupError(
-      "Gmail message trash failed",
-      await parseErrorReason(response, "gmail_trash_failed"),
-      response.status
-    );
-  }
-}
-
-async function postGmailMessage(
-  env: Env,
-  rawBytes: Uint8Array,
-  accessToken: string
-): Promise<Response> {
-  const userId = encodeURIComponent(getGmailUserId(env));
-  const boundary = createMultipartBoundary();
-  const body = buildMultipartInsertBody(rawBytes, boundary);
+  const messageUrl = gmailUserUrl(env, `/messages/${encodeURIComponent(normalizedMessageId)}`);
 
   try {
-    return await fetch(
-      `${GMAIL_UPLOAD_API_BASE}/users/${userId}/messages?uploadType=multipart&internalDateSource=dateHeader`,
-      {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${accessToken}`,
-          "content-type": `multipart/related; boundary=${boundary}`
-        },
-        body
-      }
+    const message = await readGmailJson<{ labelIds?: string[] }>(
+      env,
+      "trash",
+      `${messageUrl}?format=minimal`
     );
-  } catch {
-    throw new GmailBackupError(
-      "Gmail message insert failed",
-      "gmail_insert_fetch_failed"
-    );
+
+    if (message.labelIds?.includes("TRASH")) {
+      return;
+    }
+
+    const response = await fetchGmail(env, "trash", `${messageUrl}/trash`, { method: "POST" });
+
+    if (!response.ok) {
+      throw await toGmailApiError(response, "trash");
+    }
+  } catch (error) {
+    // 邮件已不存在时与已移入垃圾箱同样视为完成。
+    if (error instanceof GmailApiError && error.status === 404) {
+      return;
+    }
+
+    throw error;
   }
 }
 
@@ -153,106 +109,4 @@ function buildMultipartInsertBody(
   body.set(tail, head.length + rawBytes.length);
 
   return body;
-}
-
-async function trashGmailMessageById(
-  env: Env,
-  messageId: string,
-  accessToken: string
-): Promise<Response> {
-  const userId = encodeURIComponent(getGmailUserId(env));
-  const messageUrl = `${GMAIL_API_BASE}/users/${userId}/messages/${encodeURIComponent(messageId)}`;
-  const headers = { authorization: `Bearer ${accessToken}` };
-
-  try {
-    const existing = await fetch(`${messageUrl}?format=minimal`, { headers });
-
-    if (!existing.ok) {
-      return existing;
-    }
-
-    const message = await existing.json<{ labelIds?: string[] }>();
-
-    if (message.labelIds?.includes("TRASH")) {
-      return existing;
-    }
-
-    return await fetch(`${messageUrl}/trash`, { method: "POST", headers });
-  } catch {
-    throw new GmailBackupError(
-      "Gmail message trash failed",
-      "gmail_trash_fetch_failed"
-    );
-  }
-}
-
-async function parseInsertResponse(
-  response: Response
-): Promise<{ id: string; threadId?: string }> {
-  let payload: unknown;
-
-  try {
-    payload = await response.json();
-  } catch {
-    throw new GmailBackupError(
-      "Gmail message insert failed",
-      "invalid_gmail_insert_response",
-      response.status
-    );
-  }
-
-  if (!payload || typeof payload !== "object") {
-    throw new GmailBackupError(
-      "Gmail message insert failed",
-      "invalid_gmail_insert_response",
-      response.status
-    );
-  }
-
-  const record = payload as Record<string, unknown>;
-
-  if (typeof record.id !== "string" || record.id.trim() === "") {
-    throw new GmailBackupError(
-      "Gmail message insert failed",
-      "invalid_gmail_insert_response",
-      response.status
-    );
-  }
-
-  return {
-    id: record.id.trim(),
-    threadId: typeof record.threadId === "string" ? record.threadId : undefined
-  };
-}
-
-async function parseErrorReason(response: Response, fallback: string): Promise<string> {
-  let payload: unknown;
-
-  try {
-    payload = await response.json();
-  } catch {
-    return fallback;
-  }
-
-  return extractReason(payload) ?? fallback;
-}
-
-function extractReason(value: unknown): string | null {
-  if (!value || typeof value !== "object") {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const error = record.error;
-
-  if (typeof error === "string") {
-    return sanitizeErrorReason(error);
-  }
-
-  if (error && typeof error === "object") {
-    const nested = error as Record<string, unknown>;
-    return sanitizeErrorReason(nested.status) ?? sanitizeErrorReason(nested.reason);
-  }
-
-  return sanitizeErrorReason(record.reason);
 }
