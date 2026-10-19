@@ -24,13 +24,11 @@ const convertHtmlToText = compile({
 });
 
 export function buildReadableEmailBody(parsed: ParsedEmailForProcessing): string {
-  const text = parsed.text.trim();
+  const text = normalizeWhitespace(parsed.text);
+  const htmlText = htmlToReadableText(parsed.html);
 
-  if (text) {
-    return normalizeWhitespace(text);
-  }
-
-  return htmlToReadableText(parsed.html);
+  // 部分发件系统的纯文本部分只有签名或占位文字，正文只在 HTML 中。
+  return text.length * 2 >= htmlText.length ? text : htmlText;
 }
 
 export function buildSummaryInputText(parsed: ParsedEmailForProcessing): string {
