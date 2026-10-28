@@ -34,7 +34,7 @@
 - 定时补偿入口：`src/handlers/scheduled.ts` -> `src/services/cron-monitor.ts`，同时续期 Gmail 直收监听，并在每天台北时间 12:00 同步一次直收邮件。
 - Gmail 直收入口：`src/handlers/gmail-push.ts` -> `src/services/gmail-direct.ts`，可选功能。
 - 核心状态：Cloudflare KV，主要 key 前缀见架构文档。
-- 使用范围：单个 Gmail 授权账号和本人 Telegram 私聊，后续改动由实际需求或生产问题驱动。
+- 使用范围：Gmail 主备份写入一个授权账号，Gmail 直收可监听多个按编号区分的授权账号；Telegram 只用本人私聊。后续改动由实际需求或生产问题驱动。
 
 ## 维护硬边界
 

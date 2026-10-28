@@ -7,7 +7,7 @@
 | 基础必填 | Gmail 的 3 项授权信息、Telegram 的 3 项配置、`MAIL_KV` 绑定 | — |
 | AI 三选一 | 所选模式的模型和 API key；`SUMMARY_PROVIDER` 默认 `openai`，其他模式需显式指定 | 另外两家的全部变量；使用官方接口时的 Base URL |
 | 邮件兜底 | 使用哪种兜底，就补齐该服务及共用收件地址的配置 | 暂未使用的兜底服务；正式收信建议至少配好一种 |
-| Gmail 直收通知 | 启用时同时填写主题、标签和推送 token | 不需要直收通知时全部省略 |
+| Gmail 直收通知 | 启用时同时填写主题、标签和推送 token；每增加一个账号，补一组带编号的 refresh token 和标签 | 不需要直收通知时全部省略 |
 | 共用可选项 | 无 | 提示词、Gmail 用户标识、解析大小、重试次数等均有默认行为 |
 
 例如选 Gemini，只需在基础配置之外设置 `SUMMARY_PROVIDER=gemini`、`GEMINI_MODEL` 和 `GEMINI_API_KEY`。`GEMINI_BASE_URL` 默认使用 Google 官方地址，OpenAI 和 OpenRouter 的配置均可省略。
@@ -163,15 +163,19 @@ Gmail 主备份成功时不会读取这些配置；Gmail 失败后依次尝试 C
 
 ## Gmail 直收通知：可选
 
-直接发到 Gmail 的邮件也生成摘要并通知 Telegram。未设置 `GMAIL_DIRECT_TOPIC` 时功能关闭，`/gmail/push` 返回 404，Cron 不调用 Gmail 监听接口。
+直接发到 Gmail 的邮件也生成摘要并通知 Telegram，可以同时监听多个 Gmail 账号。未设置 `GMAIL_DIRECT_TOPIC` 时功能关闭，`/gmail/push` 返回 404，Cron 不调用 Gmail 监听接口。
 
 | 变量 | 配置位置 | 填写内容 |
 |---|---|---|
-| `GMAIL_DIRECT_TOPIC` | `wrangler.jsonc` 的 `vars` | Pub/Sub 主题全名，格式 `projects/YOUR_GCP_PROJECT_ID/topics/YOUR_TOPIC` |
-| `GMAIL_DIRECT_LABEL` | `wrangler.jsonc` 的 `vars` | Gmail 过滤器为直收邮件添加的标签名称；嵌套标签写完整路径 |
-| `GMAIL_DIRECT_PUSH_SECRET` | 本地 `.dev.vars` / 生产 Secret | 自行生成的随机字符串，与 Pub/Sub 推送地址中的 `token` 参数一致 |
+| `GMAIL_DIRECT_TOPIC` | `wrangler.jsonc` 的 `vars` | Pub/Sub 主题全名，格式 `projects/YOUR_GCP_PROJECT_ID/topics/YOUR_TOPIC`；所有账号共用 |
+| `GMAIL_DIRECT_LABEL` | `wrangler.jsonc` 的 `vars` | 账号 1 的 Gmail 过滤器为直收邮件添加的标签名称；嵌套标签写完整路径 |
+| `GMAIL_DIRECT_PUSH_SECRET` | 本地 `.dev.vars` / 生产 Secret | 自行生成的随机字符串，与 Pub/Sub 推送地址中的 `token` 参数一致；所有账号共用 |
+| `GMAIL_REFRESH_TOKEN_<编号>` | 本地 `.dev.vars` / 生产 Secret | 第 2 个起的直收账号的 refresh token，编号从 2 开始，例如 `GMAIL_REFRESH_TOKEN_2`；使用与账号 1 相同的 OAuth 客户端取得 |
+| `GMAIL_DIRECT_LABEL_<编号>` | `wrangler.jsonc` 的 `vars` | 对应编号账号的过滤器标签名称，例如 `GMAIL_DIRECT_LABEL_2` |
 
-设置 `GMAIL_DIRECT_TOPIC` 后，`GMAIL_DIRECT_LABEL` 为必填；缺少时推送入口和 Cron 续期都会报配置错误。修改主题或标签后，下一轮 Cron 重新建立监听。Gmail 过滤器、Pub/Sub 主题授权和推送订阅的设置步骤见 [Gmail 直收通知](../gmail-direct-setup.md)。这些值属于个人账号信息，只写在本机私有配置和 Secrets 中。
+账号 1 是 Gmail 主备份写入的账号，使用 `GMAIL_REFRESH_TOKEN` 和 `GMAIL_DIRECT_LABEL`。设置 `GMAIL_DIRECT_TOPIC` 后，Worker 把账号 1 和每个已设置的 `GMAIL_REFRESH_TOKEN_<编号>` 都视为直收账号，按编号从小到大逐个续期监听。每个账号的标签变量为必填；缺少时只有该账号的监听续期失败，并按账号每天最多告警一次，其他账号不受影响。修改主题或某个账号的标签后，下一轮 Cron 重新建立该账号的监听。
+
+编号与邮箱一一对应，监听记录、同步位置、处理编号和 Telegram 消息映射都按编号保存。停用某个账号时保留其他账号的编号；换成另一个邮箱时使用新编号。Gmail 过滤器、Pub/Sub 主题授权、推送订阅和添加账号的步骤见 [Gmail 直收通知](../gmail-direct-setup.md)。这些值属于个人账号信息，只写在本机私有配置和 Secrets 中。
 
 ## 共用配置
 
@@ -179,7 +183,7 @@ Gmail 主备份成功时不会读取这些配置；Gmail 失败后依次尝试 C
 
 | 变量 | 省略时的默认值或行为 | 用途 |
 |---|---|---|
-| `GMAIL_USER_ID` | `me` | 原始 MIME 写入 OAuth 授权账号；Gmail 直收也读取该账号 |
+| `GMAIL_USER_ID` | `me` | 原始 MIME 写入 OAuth 授权账号；Gmail 直收账号 1 也读取该账号，第 2 个起的账号固定使用 `me` |
 | `SUMMARY_PROMPT` | 内置中文摘要提示词 | 自定义模板支持 `{{MAIL_TO}}`、`{{EMAIL_TEXT}}`，没放正文占位符时自动追加正文 |
 | `MAX_PARSE_BYTES` | `10485760`（10 MiB） | 只限制 MIME 解析，不限制原始邮件读取和备份；Gmail 直收邮件的 `sizeEstimate` 超过该值时不下载原件 |
 | `ENVIRONMENT` | `development`；示例设为 `production` | 仅为健康检查环境标识 |

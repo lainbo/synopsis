@@ -8,7 +8,7 @@
 |------|------|
 | 改邮件接收、解析、幂等 | `src/handlers/email.ts`、`processing-id.ts`、`processing-state.ts`、`mime-parser.ts` |
 | 改 Gmail 或备份兜底 | `backup-orchestrator.ts`、`gmail-auth.ts`、`gmail-api.ts`、`gmail-backup.ts`、`cloudflare-email-fallback.ts`、`resend-fallback.ts`、`fallback-email-content.ts` |
-| 改 Gmail 直收 | `src/handlers/gmail-push.ts`、`gmail-direct.ts`、`gmail-api.ts`、`mime-parser.ts`、`notification-orchestrator.ts`、`docs/gmail-direct-setup.md` |
+| 改 Gmail 直收 | `src/handlers/gmail-push.ts`、`gmail-direct.ts`、`config.ts`（账号编号与变量名）、`gmail-auth.ts`、`gmail-api.ts`、`mime-parser.ts`、`notification-orchestrator.ts`、`docs/gmail-direct-setup.md` |
 | 改摘要或 Telegram 通知 | `notification-orchestrator.ts`、`email-summary.ts`、`summary-request.ts`、`openai-summary.ts`、`openrouter-summary.ts`、`gemini-summary.ts`、`telegram.ts`、`email-cache.ts` |
 | 改 Telegram 按钮 | `telegram-callback.ts`、`telegram.ts`、`email-cache.ts`、`gmail-backup.ts` |
 | 改 Cron 补偿 | `cron-monitor.ts`、`telegram-compensation.ts`、`processing-state.ts`、`reliability-alerts.ts`、`gmail-direct.ts`（监听续期和每日同步） |
@@ -34,8 +34,10 @@
 - Cron 遇到单封邮件的状态读取或补偿异常时继续处理其他邮件；`backup_done=true` 时不得补发旧的全部备份失败告警。
 - 无 Message-ID 的处理编号必须包含实际 SMTP 收件地址与发件地址，不能仅凭原件哈希合并不同投递。
 - Telegram callback 必须校验 `TG_WEBHOOK_SECRET`、私聊类型、本人 chat id 和点击者 id。
-- Gmail 直收链路只能调用 Gmail 读取接口；推送入口校验 `GMAIL_DIRECT_PUSH_SECRET` 后立即返回 200，同步在后台进行。单封邮件失败时不推进同步位置，`history.list` 返回 404 时才从当前位置重置。
-- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按 `gmail-direct:watch_alert` 每天最多一次；每日同步只在计划时间为 UTC 04:00（台北时间 12:00）的那一轮执行，与续期结果无关。
+- Gmail 直收链路只能调用 Gmail 读取接口；推送入口校验 `GMAIL_DIRECT_PUSH_SECRET`，按推送体中的邮箱地址匹配到账号后只同步该账号，等同步结束或满 `PUSH_SYNC_WAIT_MS`（8 秒，须低于订阅 10 秒的确认期限）再返回 200，同步失败也返回 200；匹配不到时返回 404 交给 Pub/Sub 重投。单封邮件失败时不推进同步位置，`history.list` 返回 404 时才从当前位置重置。
+- Gmail 直收不得引入自我调度的定时器或按推送触发的写操作；监听续期只在 Cron 中进行，告警按各账号的 `watch_alert` 键每天最多一次；每日同步只在计划时间为 UTC 04:00（台北时间 12:00）的那一轮执行，与续期结果无关。
+- 直收账号以编号列表循环处理，不按账号数量写分支。账号 1 的变量名、KV 键和处理编号保持不带编号，改动这些名称会让已部署的单账号配置和状态失效；账号相关的变量名统一通过 `gmailAccountVar()` 生成。Gmail 主备份 `messages.insert` 只写入账号 1。
+- Gmail 直收处理状态写入 `gmail_account`，消息映射写入 `gmailAccount`；「删邮件+消息」必须在映射记录的账号中操作，缺少该字段时按账号 1 处理。
 - 原文经本人 Telegram 私聊 callback 内联提供，读取正文或操作 Gmail 前须校验消息映射归属。
 
 ## 并发限制

@@ -172,6 +172,7 @@ export async function notifyEmailSummary({
       chatId: getTelegramChatId(env),
       messageId,
       gmailMessageId,
+      gmailAccount: state.gmail_account,
       createdAt: attemptedAt.toISOString()
     });
     stage = "message_sent_state_failed";

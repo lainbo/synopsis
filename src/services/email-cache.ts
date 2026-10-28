@@ -26,6 +26,7 @@ export interface MessageMapping {
   chatId: string;
   messageId: number;
   gmailMessageId?: string;
+  gmailAccount?: string;
   createdAt: string;
 }
 

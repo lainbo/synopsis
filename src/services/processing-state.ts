@@ -8,6 +8,7 @@ export interface ProcessingState {
   backup_provider?: "gmail" | "cloudflare_email" | "resend";
   backup_done_at?: string;
   gmail_message_id?: string;
+  gmail_account?: string;
   fallback_message_id?: string;
   backup_error?: string;
   backup_error_chain?: string;

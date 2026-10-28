@@ -26,6 +26,8 @@ export interface Env {
   GMAIL_DIRECT_TOPIC?: string;
   GMAIL_DIRECT_LABEL?: string;
   GMAIL_DIRECT_PUSH_SECRET?: string;
+  [key: `GMAIL_REFRESH_TOKEN_${string}`]: string | undefined;
+  [key: `GMAIL_DIRECT_LABEL_${string}`]: string | undefined;
   TG_WEBHOOK_SECRET?: string;
   MAX_PARSE_BYTES?: string;
   OPENROUTER_ZDR?: string;

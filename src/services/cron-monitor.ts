@@ -51,20 +51,24 @@ export async function runScheduledMaintenance(
     await runTelegramCompensation(env, { now }).catch((error) => {
       logError("telegram_compensation_failed", error);
     });
-    await renewGmailDirectWatch(env, now).catch((error) => {
-      logError("gmail_direct_watch_failed", error);
-    });
-
+    const direct = getGmailDirectConfig(env);
     // 每天固定同步一次：直收邮件间隔很长时同步位置不会过期，推送时处理失败的邮件也不必等下一次推送。
     // 计划时间落在整 5 分钟，每天只有整点那一轮命中。
-    if (
-      now.getUTCHours() === GMAIL_DIRECT_DAILY_SYNC_UTC_HOUR &&
-      now.getUTCMinutes() < 5 &&
-      getGmailDirectConfig(env)
-    ) {
-      await syncGmailDirectMessages(env, ctx).catch((error) => {
-        logError("gmail_direct_sync_failed", error);
-      });
+    const dailySync =
+      now.getUTCHours() === GMAIL_DIRECT_DAILY_SYNC_UTC_HOUR && now.getUTCMinutes() < 5;
+
+    if (direct) {
+      for (const account of direct.accounts) {
+        await renewGmailDirectWatch(env, direct.topic, account, now).catch((error) => {
+          logError("gmail_direct_watch_failed", error, { account });
+        });
+
+        if (dailySync) {
+          await syncGmailDirectMessages(env, ctx, account).catch((error) => {
+            logError("gmail_direct_sync_failed", error, { account });
+          });
+        }
+      }
     }
   } finally {
     await releaseCronLock(env.MAIL_KV);

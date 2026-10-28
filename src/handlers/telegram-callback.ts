@@ -7,7 +7,11 @@ import {
   type EmailCacheRecord,
   type MessageMapping
 } from "../services/email-cache";
-import { getRequiredEnv, getTelegramChatId } from "../services/config";
+import {
+  getRequiredEnv,
+  getTelegramChatId,
+  PRIMARY_GMAIL_ACCOUNT
+} from "../services/config";
 import { buildSummaryInputText } from "../services/email-readable-text";
 import { trashGmailMessage } from "../services/gmail-backup";
 import { generateEmailSummary } from "../services/email-summary";
@@ -276,6 +280,7 @@ async function trashGmailOrAnswer(
   mapping: MessageMapping
 ): Promise<void> {
   const gmailMessageId = mapping.gmailMessageId;
+  const gmailAccount = mapping.gmailAccount ?? PRIMARY_GMAIL_ACCOUNT;
 
   if (!gmailMessageId) {
     await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
@@ -286,10 +291,11 @@ async function trashGmailOrAnswer(
   }
 
   try {
-    await trashGmailMessage(c.env, gmailMessageId);
+    await trashGmailMessage(c.env, gmailAccount, gmailMessageId);
   } catch (error) {
     logError("gmail_trash_failed", error, {
       messageId: parsed.messageId,
+      gmail_account: gmailAccount,
       gmail_message_id: gmailMessageId
     });
     await answerTelegramCallbackQuery(c.env, parsed.callbackId, {

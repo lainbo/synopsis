@@ -9,7 +9,7 @@
 | `src/handlers/email.ts` | Email Routing 入站邮件处理主入口 |
 | `src/handlers/scheduled.ts` | Cron Trigger 入口 |
 | `src/handlers/telegram-callback.ts` | Telegram inline button callback webhook |
-| `src/handlers/gmail-push.ts` | Gmail 直收通知的 Pub/Sub 推送入口，校验 token 后立即确认并在后台同步 |
+| `src/handlers/gmail-push.ts` | Gmail 直收通知的 Pub/Sub 推送入口，校验 token、按推送中的邮箱地址确定账号并同步该账号，同步结束或等满 8 秒后确认 |
 | `src/handlers/health.ts` | JSON 健康检查，只证明 HTTP 入口可响应 |
 
 ## 主流程
@@ -65,27 +65,33 @@ flowchart TD
 
 直接投递到 Gmail、不经过 Email Routing 的邮件，由 Gmail 过滤器按 `deliveredto:` 加标签，`users.watch` 只监听该标签并发布到 Pub/Sub。Worker 用 `messages.insert` 写入的备份没有 `Delivered-To` 邮件头，不会被过滤器选中。设置步骤见 [Gmail 直收通知](../gmail-direct-setup.md)。
 
+直收支持多个 Gmail 账号，账号以编号标识。`getGmailDirectConfig()` 在设置了 `GMAIL_DIRECT_TOPIC` 时返回账号列表：账号 1 固定在首位，其后是 `Env` 中每个 `GMAIL_REFRESH_TOKEN_<编号>`（编号不小于 2）按数值排序。账号 1 使用不带编号的变量、KV 键和处理编号，与主备份共用 refresh token；其他账号由 `gmailAccountVar()` 拼出 `_<编号>` 变量名，KV 键和处理编号带 `:<编号>`。所有账号共用 OAuth 客户端、Pub/Sub 主题、推送订阅和推送 token，access token 按账号分别缓存。
+
 ```mermaid
 flowchart TD
   A["Pub/Sub 推送 POST /gmail/push"] --> B{"已配置 GMAIL_DIRECT_TOPIC 且 token 匹配?"}
   B -- "否" --> B1["404 / 401"]
-  B -- "是" --> C["返回 200，ctx.waitUntil(syncGmailDirectMessages())"]
-  C --> D["读取 gmail-direct:watch 和同步位置"]
+  B -- "是" --> B2{"推送中的 emailAddress 与某个账号监听记录的邮箱地址一致?"}
+  B2 -- "否" --> B3["404，Pub/Sub 按订阅设置重投"]
+  B2 -- "是" --> C["ctx.waitUntil(syncGmailDirectMessages(该账号))，同步结束或等满 8 秒后返回 200"]
+  C --> D["读取该账号的监听记录和同步位置"]
   D --> E["history.list: startHistoryId + labelId + messageAdded"]
   E -- "404 同步位置过期" --> E1["按 profile.historyId 重置同步位置并告警"]
   E --> F["逐封 ingestGmailDirectMessage()"]
-  F --> G{"processing:gmail:消息ID 已 backup_done?"}
+  F --> G{"该邮件的处理状态已 backup_done?"}
   G -- "是" --> F
   G -- "否" --> H["messages.get metadata：跳过 404、SPAM、TRASH 和带 X-Processing-Id 的兜底邮件"]
   H --> I["parseEmailForProcessing()：未超过解析阈值时读取 format=raw"]
-  I --> J["保存状态：backup_provider=gmail、gmail_message_id 和待通知字段"]
+  I --> J["保存状态：backup_provider=gmail、gmail_message_id、gmail_account 和待通知字段"]
   J --> K["startEmailNotification()"]
   F --> L{"全部成功?"}
   L -- "是" --> M["保存新的同步位置"]
   L -- "否" --> N["保留原同步位置，下一次推送或每日 Cron 同步重新拉取"]
 ```
 
-直收邮件的处理编号为 `gmail:<Gmail 消息 ID>`，收件地址取第一个 `Delivered-To` 邮件头，`rawSize` 取 Gmail 的 `sizeEstimate`。状态写入 `backup_done=true`、`backup_provider=gmail`，摘要、Telegram 发送、Cron 补偿和「删邮件+消息」按钮与域名邮件共用同一实现。整条链路对 Gmail 只读，推送入口始终在后台同步前返回 200，Pub/Sub 不会因同步失败重投。Cron 在计划时间为 UTC 04:00（台北时间 12:00）的那一轮也调用 `syncGmailDirectMessages()`，从读取监听和同步位置开始执行同样的流程，直收邮件间隔很长时同步位置不会因只靠推送更新而过期。
+Gmail 推送体的 `message.data` 是 base64 编码的 JSON，包含发生变化的 `emailAddress` 和 `historyId`。`findGmailDirectAccount()` 按不区分大小写的邮箱地址逐个比对各账号监听记录中的 `emailAddress`，找到后只同步该账号；`historyId` 不使用，实际新增邮件以保存的同步位置为准。监听记录中的邮箱地址由 Cron 建立监听时调用 `getProfile` 写入，记录缺少地址时下一轮 Cron 会重新建立监听。推送体无法解析或没有匹配的账号时返回 404，Pub/Sub 按订阅设置重投。
+
+账号 1 的直收邮件处理编号为 `gmail:<Gmail 消息 ID>`，其他账号为 `gmail:<编号>:<Gmail 消息 ID>`。收件地址取第一个 `Delivered-To` 邮件头，`rawSize` 取 Gmail 的 `sizeEstimate`。状态写入 `backup_done=true`、`backup_provider=gmail`、`gmail_account`，通知成功后 `msgmap` 保存 `gmailAccount`，「删邮件+消息」据此在对应账号中移入垃圾箱；没有 `gmailAccount` 的映射按账号 1 处理。摘要、Telegram 发送、Cron 补偿和按钮与域名邮件共用同一实现。整条链路对 Gmail 只读。匹配到账号后，推送入口等同步结束再返回 200，最多等待 8 秒（`PUSH_SYNC_WAIT_MS`），未完成的部分留在后台继续；同步失败时也返回 200，Pub/Sub 不会因此重投。摘要通知由同步通过 `ctx.waitUntil()` 发起，与同步共用响应后 30 秒的后台时间，入口先等同步结束，通知就有完整的 30 秒。Cron 在计划时间为 UTC 04:00（台北时间 12:00）的那一轮也逐个账号调用 `syncGmailDirectMessages()`，从读取监听和同步位置开始执行同样的流程，直收邮件间隔很长时同步位置不会因只靠推送更新而过期。
 
 ## 定时补偿流程
 
@@ -101,11 +107,15 @@ flowchart TD
   H --> I["补偿 fallback_alert_done=false"]
   I --> J["补偿 critical_backup_alert_done=false"]
   J --> K["补偿 gmail:auth_alert.done=false"]
-  K --> W["renewGmailDirectWatch(): 已启用直收且监听剩余不足 6 天或配置变化时续期"]
-  W --> Y{"已启用直收且计划时间为 UTC 04:00 那一轮?"}
-  Y -- "是" --> X["syncGmailDirectMessages(): 每天同步一次直收邮件"]
-  Y -- "否" --> L["释放 cron:lock"]
-  X --> L
+  K --> V{"已启用直收?"}
+  V -- "否" --> L["释放 cron:lock"]
+  V -- "是" --> W["按编号逐个账号 renewGmailDirectWatch()：监听剩余不足 6 天、缺少邮箱地址或配置变化时续期"]
+  W --> Y{"计划时间为 UTC 04:00 那一轮?"}
+  Y -- "是" --> X["syncGmailDirectMessages(): 该账号每天同步一次"]
+  Y -- "否" --> Z{"还有下一个账号?"}
+  X --> Z
+  Z -- "是" --> W
+  Z -- "否" --> L
 ```
 
 ## HTTP 路由
@@ -114,7 +124,7 @@ flowchart TD
 |------|------|------|
 | `GET /health` | `src/handlers/health.ts` | JSON 健康检查，只证明 HTTP 入口可响应，不检查发信绑定或 Secrets |
 | `POST /telegram/webhook` | `src/handlers/telegram-callback.ts` | Telegram callback webhook，需要 `TG_WEBHOOK_SECRET` |
-| `POST /gmail/push` | `src/handlers/gmail-push.ts` | Pub/Sub 推送入口；未配置 `GMAIL_DIRECT_TOPIC` 时返回 404，查询参数 `token` 与 `GMAIL_DIRECT_PUSH_SECRET` 不一致时返回 401 |
+| `POST /gmail/push` | `src/handlers/gmail-push.ts` | Pub/Sub 推送入口；未配置 `GMAIL_DIRECT_TOPIC` 时返回 404，查询参数 `token` 与 `GMAIL_DIRECT_PUSH_SECRET` 不一致时返回 401，推送中的邮箱地址没有匹配的账号时返回 404 |
 
 摘要消息提供「原文」按钮；Gmail 主备份成功或来自 Gmail 直收时另有「删邮件+消息」。点「原文」后当前消息改为可读正文，并出现「返回摘要」。「返回摘要」只更新当前 Telegram 消息，不写回 KV 缓存。完整排版与附件在备份邮箱查看。
 
@@ -128,10 +138,10 @@ flowchart TD
 | `mime-parser.ts` | 两条入口共用的 `parseEmailForProcessing()`：解析阈值判断、postal-mime 解析与 degraded parse |
 | `raw-email.ts` | 读取原始邮件 bytes |
 | `backup-orchestrator.ts` | Gmail -> Cloudflare Email Sending -> Resend 备份链路 |
-| `gmail-auth.ts` | Gmail OAuth access token 获取和内存缓存 |
-| `gmail-api.ts` | Gmail API 请求、401 后强制刷新 token 重试一次、错误原因解析 |
-| `gmail-backup.ts` | Gmail `messages.insert`（multipart media upload）和 `trash` |
-| `gmail-direct.ts` | Gmail 直收：`users.watch` 续期、`history.list` 增量同步、读取邮件并进入通知 |
+| `gmail-auth.ts` | 按账号获取 Gmail OAuth access token 并分别缓存在内存中 |
+| `gmail-api.ts` | 按账号发起 Gmail API 请求、401 后强制刷新 token 重试一次、错误原因解析 |
+| `gmail-backup.ts` | Gmail `messages.insert`（multipart media upload，固定写入账号 1）和按账号 `trash` |
+| `gmail-direct.ts` | Gmail 直收：发现直收账号、按推送邮箱地址匹配账号、逐账号 `users.watch` 续期、`history.list` 增量同步、读取邮件并进入通知 |
 | `base64url.ts` | Base64 编码与 Gmail `raw` 字段的 base64url 解码 |
 | `cloudflare-email-fallback.ts` | Cloudflare Email Sending 兜底，附带原始 MIME 附件 |
 | `resend-fallback.ts` | Resend 兜底，附带原始 MIME 附件 |
@@ -147,7 +157,7 @@ flowchart TD
 | `summary-request.ts` | 三种摘要模式共用的超时、重试次数、可重试错误判断、`Retry-After` 解析及错误详情脱敏 |
 | `summary-prompt.ts` | 默认中文摘要 prompt 和环境变量覆盖 |
 | `reliability-alerts.ts` | Gmail fallback、critical backup、兜底回环、Gmail auth、Gmail 直收监听续期及同步位置重置告警 |
-| `config.ts` | 环境变量读取与必填校验 |
+| `config.ts` | 环境变量读取与必填校验，Gmail 账号编号与变量名的对应 |
 | `logging.ts` | 结构化日志输出 |
 | `error-reason.ts` | Gmail 与 Resend 错误原因的格式校验 |
 | `text-limit.ts` | 按字素边界限长，供 Telegram 发送和摘要输入共用 |
@@ -158,20 +168,20 @@ flowchart TD
 |------------|-----|------|
 | `processing:<processingId>` | 每次写入后 24h | 邮件处理阶段状态、attempt、备份/摘要/Telegram 标记；补偿仍在更新时会续期 |
 | `email:<uuid>` | 7d | 通知恢复和 Telegram 原文查看用的正文、摘要文本、摘要结果及 metadata；UUID 在首次处理状态中确定 |
-| `msgmap:<telegramMessageId>` | 7d | Telegram message -> email cache / Gmail message 映射 |
+| `msgmap:<telegramMessageId>` | 7d | Telegram message -> email cache / Gmail message 映射；直收邮件另存 Gmail 账号编号 |
 | `gmail:auth_alert` | 无过期时间 | Gmail auth 失效告警状态；Gmail 主备份再次成功时删除 |
 | `cron:lock` | 默认 240s | Cron 防重入锁 |
 | `telegram-compensation:final:*` | 7d | 补偿最终失败 alert dedupe |
 | `fallback-loopback:alert:<processingId>:<gmail_done\|gmail_failed>` | 7d | 兜底回环告警 dedupe，同一封副本重投时同一结果只告警一次 |
-| `gmail-direct:watch` | 无过期时间 | Gmail 直收监听的主题、标签名、标签 ID、到期时间和建立监听时的 `historyId` |
-| `gmail-direct:cursor` | 无过期时间 | Gmail 直收同步位置（`historyId`），推送或每日 Cron 同步成功后更新；缺失时从 `gmail-direct:watch` 的 `historyId` 开始 |
-| `gmail-direct:watch_alert` | 24h | 监听续期失败告警 dedupe，每天最多一次 |
+| `gmail-direct:watch`、`gmail-direct:<编号>:watch` | 无过期时间 | 账号 1 及其他编号账号的直收监听：主题、标签名、标签 ID、邮箱地址、到期时间和建立监听时的 `historyId` |
+| `gmail-direct:cursor`、`gmail-direct:<编号>:cursor` | 无过期时间 | 对应账号的直收同步位置（`historyId`），推送或每日 Cron 同步成功后更新；缺失时从该账号监听记录的 `historyId` 开始 |
+| `gmail-direct:watch_alert`、`gmail-direct:<编号>:watch_alert` | 24h | 对应账号的监听续期失败告警 dedupe，每天最多一次 |
 
 ## 状态字段阅读法
 
 `processing:<id>` 保存邮件处理状态，也包含邮件元信息。排障常用字段：
 
-- `backup_done` / `backup_provider` / `gmail_message_id` / `fallback_message_id`
+- `backup_done` / `backup_provider` / `gmail_message_id` / `gmail_account` / `fallback_message_id`
 - `backup_error` / `backup_error_chain`
 - `fallback_alert_done` / `critical_backup_alert_done`
 - `summary_done` / `summary_error` / `summary_error_detail` / `summary_privacy_downgraded` / `summary_fallback_model_used` / `summary_model`

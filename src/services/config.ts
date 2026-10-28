@@ -26,14 +26,21 @@ export function getSummaryProvider(env: Env): SummaryProvider {
   throw new Error("Invalid SUMMARY_PROVIDER");
 }
 
-export function getGmailUserId(env: Env): string {
-  const userId = env.GMAIL_USER_ID?.trim();
+// 主备份写入账号 1；第 2 个起的账号只用于 Gmail 直收。
+export const PRIMARY_GMAIL_ACCOUNT = "1";
 
-  if (userId) {
-    return userId;
-  }
+type GmailAccountVar = "GMAIL_REFRESH_TOKEN" | "GMAIL_DIRECT_LABEL";
 
-  return "me";
+// 账号 1 使用不带编号的变量名，其他账号在变量名后加 _编号。
+export function gmailAccountVar<K extends GmailAccountVar>(
+  name: K,
+  account: string
+): K | `${K}_${string}` {
+  return account === PRIMARY_GMAIL_ACCOUNT ? name : `${name}_${account}`;
+}
+
+export function getGmailUserId(env: Env, account: string): string {
+  return (account === PRIMARY_GMAIL_ACCOUNT && env.GMAIL_USER_ID?.trim()) || "me";
 }
 
 export function getApiBaseUrl(value: string | undefined, defaultUrl: string): string {

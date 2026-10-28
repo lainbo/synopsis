@@ -1,11 +1,11 @@
-import { getRequiredEnv } from "./config";
+import { getRequiredEnv, gmailAccountVar } from "./config";
 import type { Env } from "../types";
 import { sanitizeErrorReason } from "../utils/error-reason";
 
 const GMAIL_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
 const EARLY_REFRESH_MS = 60000;
 
-let cachedToken: { accessToken: string; expiresAt: number } | null = null;
+const cachedTokens = new Map<string, { accessToken: string; expiresAt: number }>();
 
 export class GmailAuthError extends Error {
   readonly reason: string;
@@ -21,9 +21,11 @@ export class GmailAuthError extends Error {
 
 export async function getGmailAccessToken(
   env: Env,
+  account: string,
   options: { forceRefresh?: boolean; now?: number } = {}
 ): Promise<string> {
   const now = options.now ?? Date.now();
+  const cachedToken = cachedTokens.get(account);
 
   if (
     cachedToken &&
@@ -36,7 +38,7 @@ export async function getGmailAccessToken(
   const body = new URLSearchParams({
     client_id: getRequiredEnv(env, "GMAIL_CLIENT_ID"),
     client_secret: getRequiredEnv(env, "GMAIL_CLIENT_SECRET"),
-    refresh_token: getRequiredEnv(env, "GMAIL_REFRESH_TOKEN"),
+    refresh_token: getRequiredEnv(env, gmailAccountVar("GMAIL_REFRESH_TOKEN", account)),
     grant_type: "refresh_token"
   });
 
@@ -64,10 +66,10 @@ export async function getGmailAccessToken(
 
   const payload = await parseTokenResponse(response);
 
-  cachedToken = {
+  cachedTokens.set(account, {
     accessToken: payload.accessToken,
     expiresAt: now + payload.expiresIn * 1000
-  };
+  });
 
   return payload.accessToken;
 }

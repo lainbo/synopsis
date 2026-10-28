@@ -6,6 +6,7 @@ import {
   readGmailJson,
   toGmailApiError
 } from "./gmail-api";
+import { PRIMARY_GMAIL_ACCOUNT } from "./config";
 import type { Env } from "../types";
 
 export async function insertGmailMessage(
@@ -15,9 +16,11 @@ export async function insertGmailMessage(
   const boundary = createMultipartBoundary();
   const record = await readGmailJson<{ id?: unknown; threadId?: unknown } | null>(
     env,
+    PRIMARY_GMAIL_ACCOUNT,
     "insert",
     gmailUserUrl(
       env,
+      PRIMARY_GMAIL_ACCOUNT,
       "/messages?uploadType=multipart&internalDateSource=dateHeader",
       GMAIL_UPLOAD_API_BASE
     ),
@@ -40,6 +43,7 @@ export async function insertGmailMessage(
 
 export async function trashGmailMessage(
   env: Env,
+  account: string,
   messageId: string
 ): Promise<void> {
   const normalizedMessageId = messageId.trim();
@@ -48,11 +52,16 @@ export async function trashGmailMessage(
     throw new GmailApiError("Gmail trash failed", "gmail_trash_message_id_missing");
   }
 
-  const messageUrl = gmailUserUrl(env, `/messages/${encodeURIComponent(normalizedMessageId)}`);
+  const messageUrl = gmailUserUrl(
+    env,
+    account,
+    `/messages/${encodeURIComponent(normalizedMessageId)}`
+  );
 
   try {
     const message = await readGmailJson<{ labelIds?: string[] }>(
       env,
+      account,
       "trash",
       `${messageUrl}?format=minimal`
     );
@@ -61,7 +70,9 @@ export async function trashGmailMessage(
       return;
     }
 
-    const response = await fetchGmail(env, "trash", `${messageUrl}/trash`, { method: "POST" });
+    const response = await fetchGmail(env, account, "trash", `${messageUrl}/trash`, {
+      method: "POST"
+    });
 
     if (!response.ok) {
       throw await toGmailApiError(response, "trash");

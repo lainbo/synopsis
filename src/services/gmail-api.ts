@@ -24,18 +24,24 @@ interface GmailRequestInit {
   body?: BodyInit;
 }
 
-export function gmailUserUrl(env: Env, path: string, base = GMAIL_API_BASE): string {
-  return `${base}/users/${encodeURIComponent(getGmailUserId(env))}${path}`;
+export function gmailUserUrl(
+  env: Env,
+  account: string,
+  path: string,
+  base = GMAIL_API_BASE
+): string {
+  return `${base}/users/${encodeURIComponent(getGmailUserId(env, account))}${path}`;
 }
 
 export async function fetchGmail(
   env: Env,
+  account: string,
   operation: string,
   url: string,
   init: GmailRequestInit = {}
 ): Promise<Response> {
   const send = async (forceRefresh: boolean) => {
-    const accessToken = await getGmailAccessToken(env, { forceRefresh });
+    const accessToken = await getGmailAccessToken(env, account, { forceRefresh });
 
     try {
       return await fetch(url, {
@@ -64,11 +70,12 @@ export async function fetchGmail(
 
 export async function readGmailJson<T>(
   env: Env,
+  account: string,
   operation: string,
   url: string,
   init?: GmailRequestInit
 ): Promise<T> {
-  const response = await fetchGmail(env, operation, url, init);
+  const response = await fetchGmail(env, account, operation, url, init);
 
   if (!response.ok) {
     throw await toGmailApiError(response, operation);

@@ -102,9 +102,10 @@ git diff --check
 | `gemini_http_429` / `gemini_http_5xx` | Gemini 在代码级最多 3 次尝试后仍失败 | 看 Gemini API 状态和是否持续限流；短暂抖动通常会在摘要重试或 `返回摘要` 时恢复 |
 | `openai_timeout` / `openrouter_timeout` / `gemini_timeout` | 单次请求超过 12 秒，包括响应正文迟迟未完成 | 检查供应商及代理响应时间；客户端按现有重试规则处理，失败提示可通过「返回摘要」重新生成 |
 | `openai_blocked` / `openrouter_blocked` / `gemini_blocked` | 供应商拒绝生成摘要；当前摘要调用立即结束，原件备份不受影响 | Telegram 显示拒绝生成提示，可通过「原文」查看邮件正文；OpenRouter 不因此切换备用模型或放宽 ZDR 限制 |
-| `Gmail 直收监听续期失败` | Cron 调用 Gmail `users.watch` 失败，每天最多告警一次；现有监听到期前仍会推送，到期后只能由每天台北时间 12:00 的同步读取直收邮件 | 按告警原因检查 Gmail 授权、`GMAIL_DIRECT_LABEL` 是否与 Gmail 标签名称一致（`gmail_direct_label_not_found`）、Pub/Sub 主题是否存在并授权 `gmail-api-push@system.gserviceaccount.com` 发布 |
-| `Gmail 直收同步位置已过期` | `history.list` 返回 404，同步位置已从当前位置重置 | 在 Gmail 中查看此前未通知的直收邮件；同步位置每天随 Cron 更新，出现时检查每日同步是否连续多日失败 |
-| `gmail_direct_sync_failed` / `gmail_direct_message_failed` 日志 | 直收同步或单封邮件处理失败，同步位置未前进 | 下一次推送或下一个台北时间 12:00 的 Cron 同步会重新拉取；持续出现时检查 Gmail 授权、KV 和日志中的原因码 |
+| `Gmail 直收监听续期失败（账号 N）` | Cron 为账号 N 调用 Gmail `users.watch` 前后失败，按账号每天最多告警一次；该账号现有监听到期前仍会推送，到期后只能由每天台北时间 12:00 的同步读取直收邮件，其他账号不受影响 | 按告警原因检查告警中列出的该账号 refresh token 授权、标签变量是否设置并与 Gmail 标签名称一致（`gmail_direct_label_not_found`、缺少变量时的配置错误）、Pub/Sub 主题是否存在并授权 `gmail-api-push@system.gserviceaccount.com` 发布 |
+| `Gmail 直收同步位置已过期（账号 N）` | 账号 N 的 `history.list` 返回 404，同步位置已从当前位置重置 | 在该 Gmail 中查看此前未通知的直收邮件；同步位置每天随 Cron 更新，出现时检查每日同步是否连续多日失败 |
+| `gmail_direct_sync_failed` / `gmail_direct_message_failed` 日志 | 直收同步或单封邮件处理失败，同步位置未前进；日志中的 `account` 为账号编号 | 下一次推送或下一个台北时间 12:00 的 Cron 同步会重新拉取；持续出现时检查该账号的 Gmail 授权、KV 和日志中的原因码 |
+| `gmail_direct_push_unmatched` 日志 | 推送体无法解析，或其中的邮箱地址与所有账号监听记录的地址都不一致，推送入口返回 404 | 刚部署或刚添加账号时，等待下一轮 Cron 建立监听后由 Pub/Sub 重投；持续出现时检查该邮箱是否已停用直收、对应 refresh token 是否仍在、续期是否失败 |
 
 ## Cron 和补偿
 
@@ -112,8 +113,8 @@ Cron 默认每 5 分钟触发。`runScheduledMaintenance()` 会：
 
 - 用 `cron:lock` 降低重复执行概率；KV 标记不提供严格互斥。
 - 每个获得锁的 tick 都跑 Telegram/告警补偿。
-- 启用 Gmail 直收时检查监听状态；剩余有效期不足 6 天、尚未建立或主题、标签配置变化时调用 `users.watch` 续期，正常情况每天一次。续期失败时每 5 分钟重试，告警每天最多一次。
-- 启用 Gmail 直收时，计划时间为 UTC 04:00（台北时间 12:00）的那一轮同步一次直收邮件，更新同步位置并重试此前失败的邮件，与续期结果无关；这一轮因锁被占用而跳过时当天不再补跑。
+- 启用 Gmail 直收时按账号编号逐个检查监听状态；剩余有效期不足 6 天、尚未建立、缺少邮箱地址或主题、标签配置变化时调用 `users.watch` 续期，正常情况每个账号每天一次。续期失败时每 5 分钟重试，告警按账号每天最多一次。
+- 启用 Gmail 直收时，计划时间为 UTC 04:00（台北时间 12:00）的那一轮逐个账号同步一次直收邮件，更新同步位置并重试此前失败的邮件，与续期结果无关；这一轮因锁被占用而跳过时当天不再补跑。
 - 每轮结束释放锁；补偿异常时记录日志并释放锁。
 
 `TELEGRAM_RETRY_LIMIT` 设置 Cron 判断是否继续补偿的尝试次数上限，默认 3。各类任务的计数范围不同：
@@ -137,7 +138,7 @@ Cron 默认每 5 分钟触发。`runScheduledMaintenance()` 会：
 3. 看 Telegram 是否 `telegram_done=true`；如果 false，检查 `telegram_stage`、`telegram_attempts`、`telegram_next_retry_at`。
 4. 看是否有 `fallback_alert_done=false`、`critical_backup_alert_done=false` 或 `gmail:auth_alert.done=false` 等待 Cron。
 5. 如果 Worker 没有收到邮件，在 Cloudflare 控制台检查 Email Routing 活动记录与路由规则。
-6. Gmail 直收邮件没有通知时，先确认邮件带有过滤器标签，再看 `gmail-direct:watch` 的到期时间、`gmail_direct_*` 日志和 Pub/Sub 订阅的推送状态；该邮件的状态位于 `processing:gmail:<Gmail 消息 ID>`。
+6. Gmail 直收邮件没有通知时，先确认邮件带有过滤器标签，再看该账号监听记录的到期时间和邮箱地址（账号 1 为 `gmail-direct:watch`，其他为 `gmail-direct:<编号>:watch`）、带 `account` 字段的 `gmail_direct_*` 日志和 Pub/Sub 订阅的推送状态；该邮件的状态位于 `processing:gmail:<Gmail 消息 ID>`（账号 1）或 `processing:gmail:<编号>:<Gmail 消息 ID>`。
 
 ## 相关文档
 
