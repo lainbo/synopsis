@@ -98,6 +98,12 @@ export function buildOriginalKeyboard(
   };
 }
 
+export function buildTrashRetryKeyboard(): TelegramReplyMarkup {
+  return {
+    inline_keyboard: [[{ text: "🗑 重试删除", callback_data: TELEGRAM_CALLBACK_TRASH_GMAIL }]]
+  };
+}
+
 export async function editTelegramMessageText(
   env: Env,
   params: {

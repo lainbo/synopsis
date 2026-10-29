@@ -21,7 +21,7 @@
 - 告警状态和去重记录使用各自期限，详见 [KV 保存期限](ai-maintenance/architecture.md#kv-key-约定)。
 - `gmail-direct:watch`、`gmail-direct:cursor` 及其他账号带编号的同名键：启用直收通知时按账号保存监听配置、标签 ID、Gmail 地址和同步位置，不过期；停用后可手动删除。
 - Gmail 和 Telegram 的数据按各自服务及用户操作保留。删除 Telegram 消息不会自动删除所有供应商记录。
-- “删邮件+消息”只在 Gmail 主备份成功或来自 Gmail 直收时出现，将 Gmail 中的邮件移入垃圾箱并删除 Telegram 消息，成功后清理对应正文缓存和映射；不会清除处理状态、兜底邮件、日志或 AI 服务端记录。走 Cloudflare / Resend 兜底时没有这个按钮。
+- “删邮件+消息”只在 Gmail 主备份成功或来自 Gmail 直收时出现，删除 Telegram 消息并将 Gmail 中的邮件移入垃圾箱。消息删除后清理对应映射，Gmail 处理成功后清理正文缓存；Gmail 处理失败时保留正文缓存，并为失败提示消息另存一份映射供重试；消息删不掉时映射和正文缓存都保留。保留的记录按 7 天期限过期。不会清除处理状态、兜底邮件、日志或 AI 服务端记录。走 Cloudflare / Resend 兜底时没有这个按钮。
 
 ## 日志与配置
 

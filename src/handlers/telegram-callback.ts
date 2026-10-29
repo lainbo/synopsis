@@ -4,6 +4,7 @@ import {
   deleteMessageMapping,
   getEmailCacheRecord,
   getMessageMapping,
+  putMessageMapping,
   type EmailCacheRecord,
   type MessageMapping
 } from "../services/email-cache";
@@ -16,6 +17,7 @@ import { buildSummaryInputText } from "../services/email-readable-text";
 import { trashGmailMessage } from "../services/gmail-backup";
 import { generateEmailSummary } from "../services/email-summary";
 import { isSummarySkipped } from "../services/notification-orchestrator";
+import { sendGmailTrashFailedAlert } from "../services/reliability-alerts";
 import {
   formatSummaryExceptionForTelegram,
   formatSummaryFailureForTelegram,
@@ -280,26 +282,10 @@ async function trashGmailOrAnswer(
   mapping: MessageMapping
 ): Promise<void> {
   const gmailMessageId = mapping.gmailMessageId;
-  const gmailAccount = mapping.gmailAccount ?? PRIMARY_GMAIL_ACCOUNT;
 
   if (!gmailMessageId) {
     await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
       text: "未找到可移入垃圾箱的 Gmail 备份",
-      showAlert: true
-    });
-    return;
-  }
-
-  try {
-    await trashGmailMessage(c.env, gmailAccount, gmailMessageId);
-  } catch (error) {
-    logError("gmail_trash_failed", error, {
-      messageId: parsed.messageId,
-      gmail_account: gmailAccount,
-      gmail_message_id: gmailMessageId
-    });
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-      text: "Gmail 邮件处理失败，消息已保留，请稍后重试",
       showAlert: true
     });
     return;
@@ -311,16 +297,33 @@ async function trashGmailOrAnswer(
     mapping.chatId
   );
 
-  if (!telegramDeleted) {
+  if (telegramDeleted) {
+    // 消息先消失，Gmail 在响应后处理；失败时另发带重试按钮的提示。
+    c.executionCtx.waitUntil(trashGmailInBackground(c.env, mapping, gmailMessageId));
+    await deleteMessageMapping(c.env.MAIL_KV, parsed.messageId).catch((error) => {
+      logError("telegram_delete_cleanup_failed", error, {
+        messageId: parsed.messageId
+      });
+    });
     await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-      text: TELEGRAM_DELETE_PARTIAL_SUCCESS_TEXT
+      text: "✅ 已删除"
     });
     return;
   }
 
-  await cleanupDeletedCallbackState(c, parsed.messageId, mapping.emailId);
+  // 消息删不掉时（例如超过 Telegram 48 小时删除期限）按钮仍在，当场处理 Gmail 并告知结果。
+  try {
+    await trashMappedGmail(c.env, mapping, gmailMessageId);
+  } catch {
+    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
+      text: "Gmail 邮件处理失败，消息已保留，请稍后重试",
+      showAlert: true
+    });
+    return;
+  }
+
   await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-    text: "✅ 已删除"
+    text: TELEGRAM_DELETE_PARTIAL_SUCCESS_TEXT
   });
 }
 
@@ -343,24 +346,69 @@ async function tryDeleteTelegramMessage(
   }
 }
 
-async function cleanupDeletedCallbackState(
-  c: AppContext,
-  messageId: number,
-  emailId: string
+async function trashMappedGmail(
+  env: Env,
+  mapping: MessageMapping,
+  gmailMessageId: string
 ): Promise<void> {
-  const cleanupResults = await Promise.allSettled([
-    deleteMessageMapping(c.env.MAIL_KV, messageId),
-    deleteEmailCacheRecord(c.env.MAIL_KV, emailId)
-  ]);
-  const cleanupFailure = cleanupResults.find(
-    (result): result is PromiseRejectedResult => result.status === "rejected"
-  );
+  const gmailAccount = mapping.gmailAccount ?? PRIMARY_GMAIL_ACCOUNT;
 
-  if (cleanupFailure) {
-    logError("telegram_delete_cleanup_failed", cleanupFailure.reason, {
-      messageId
+  try {
+    await trashGmailMessage(env, gmailAccount, gmailMessageId);
+  } catch (error) {
+    logError("gmail_trash_failed", error, {
+      messageId: mapping.messageId,
+      gmail_account: gmailAccount,
+      gmail_message_id: gmailMessageId
     });
+    throw error;
   }
+}
+
+async function trashGmailInBackground(
+  env: Env,
+  mapping: MessageMapping,
+  gmailMessageId: string
+): Promise<void> {
+  try {
+    await trashMappedGmail(env, mapping, gmailMessageId);
+  } catch (error) {
+    await sendTrashRetryNotice(env, mapping, error);
+    return;
+  }
+
+  await deleteEmailCacheRecord(env.MAIL_KV, mapping.emailId).catch((error) => {
+    logError("telegram_delete_cleanup_failed", error, {
+      messageId: mapping.messageId
+    });
+  });
+}
+
+async function sendTrashRetryNotice(
+  env: Env,
+  mapping: MessageMapping,
+  trashError: unknown
+): Promise<void> {
+  const record = await getEmailCacheRecord(env.MAIL_KV, mapping.emailId);
+  const alert = await sendGmailTrashFailedAlert(env, record?.metadata, trashError);
+
+  if (!alert.ok) {
+    logError("gmail_trash_alert_failed", alert.reason, {
+      messageId: mapping.messageId
+    });
+    return;
+  }
+
+  // 重试按钮沿用原映射的 Gmail 账号和消息 ID，正文缓存保留到移入垃圾箱成功。
+  await putMessageMapping(env.MAIL_KV, alert.messageId, {
+    ...mapping,
+    messageId: alert.messageId,
+    createdAt: new Date().toISOString()
+  }).catch((error) => {
+    logError("gmail_trash_alert_mapping_failed", error, {
+      messageId: alert.messageId
+    });
+  });
 }
 
 function getWebhookSecret(c: AppContext): string | null {

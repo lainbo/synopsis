@@ -1,8 +1,14 @@
 import { GmailAuthError } from "./gmail-auth";
 import { GmailApiError } from "./gmail-api";
+import type { EmailCacheMetadata } from "./email-cache";
 import type { ParsedEmailForProcessing } from "./mime-parser";
 import { gmailAccountVar, TELEGRAM_RETRY_DELAY_MS } from "./config";
-import { sendTelegramMessage, TelegramError } from "./telegram";
+import {
+  buildTrashRetryKeyboard,
+  sendTelegramMessage,
+  TelegramError,
+  type TelegramMessageOptions
+} from "./telegram";
 import type { Env } from "../types";
 
 export const GMAIL_AUTH_ALERT_KEY = "gmail:auth_alert";
@@ -85,7 +91,7 @@ export async function sendCriticalBackupAlert(
     "请检查 Gmail 授权、Cloudflare Email Sending、Resend 配置。"
   ].join("\n");
 
-  return sendAlertText(env, text, CRITICAL_ALERT_TIMEOUT_MS);
+  return sendAlertText(env, text, { timeoutMs: CRITICAL_ALERT_TIMEOUT_MS });
 }
 
 export async function sendFallbackLoopbackAlert(
@@ -104,7 +110,9 @@ export async function sendFallbackLoopbackAlert(
     "请将 BACKUP_EMAIL_TO 改为不会转回本域名的外部邮箱。"
   ].join("\n");
 
-  return sendAlertText(env, text, gmailReason ? CRITICAL_ALERT_TIMEOUT_MS : undefined);
+  return sendAlertText(env, text, {
+    timeoutMs: gmailReason ? CRITICAL_ALERT_TIMEOUT_MS : undefined
+  });
 }
 
 export async function sendAiSummaryFallbackModelAlert(
@@ -154,6 +162,24 @@ export async function sendGmailDirectCursorResetAlert(
   ].join("\n");
 
   return sendAlertText(env, text);
+}
+
+export async function sendGmailTrashFailedAlert(
+  env: Env,
+  metadata: EmailCacheMetadata | undefined,
+  error: unknown
+): Promise<ReliabilityAlertResult> {
+  const text = [
+    "Gmail 邮件移入垃圾箱失败",
+    "",
+    `发件人: ${metadata?.from || "(未知发件人)"}`,
+    `收件人: ${formatRecipients(metadata?.to ?? [])}`,
+    `主题: ${metadata?.subject || "(无主题)"}`,
+    `原因: ${getAlertErrorReason(error)}`,
+    "Telegram 通知已删除，邮件仍在 Gmail 中。点「🗑 重试删除」再试一次，也可以到 Gmail 中手动删除。"
+  ].join("\n");
+
+  return sendAlertText(env, text, { replyMarkup: buildTrashRetryKeyboard() });
 }
 
 export function classifyGmailAuthExpiryReason(
@@ -274,10 +300,10 @@ async function sendGmailAuthAlert(
 async function sendAlertText(
   env: Env,
   text: string,
-  timeoutMs?: number
+  options: TelegramMessageOptions = {}
 ): Promise<ReliabilityAlertResult> {
   try {
-    const result = await sendTelegramMessage(env, text, { timeoutMs });
+    const result = await sendTelegramMessage(env, text, options);
 
     return { ok: true, messageId: result.messageId };
   } catch (error) {
