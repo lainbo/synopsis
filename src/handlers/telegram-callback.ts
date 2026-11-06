@@ -29,6 +29,7 @@ import {
   buildSummaryKeyboard,
   deleteTelegramMessage,
   editTelegramMessageText,
+  sendTelegramMessage,
   TELEGRAM_CALLBACK_BACK_SUMMARY,
   TELEGRAM_CALLBACK_TRASH_GMAIL,
   TELEGRAM_CALLBACK_VIEW_RAW
@@ -40,6 +41,7 @@ type AppContext = Context<{ Bindings: Env }>;
 
 const TELEGRAM_DELETE_PARTIAL_SUCCESS_TEXT =
   "Gmail 邮件已在垃圾箱或已不存在，但 Telegram 消息删除失败，请重试或手动删除";
+const GMAIL_TRASH_RETRY_TEXT = "Gmail 邮件处理失败，消息已保留，请稍后重试";
 
 interface TelegramCallbackUpdate {
   callback_query?: {
@@ -96,7 +98,7 @@ export async function telegramCallbackHandler(c: AppContext): Promise<Response> 
     parsed.action !== TELEGRAM_CALLBACK_BACK_SUMMARY &&
     parsed.action !== TELEGRAM_CALLBACK_TRASH_GMAIL
   ) {
-    await answerUnavailable(c.env, parsed.callbackId);
+    await answerUnavailable(c.env, parsed);
     return c.json({ ok: true });
   }
 
@@ -107,7 +109,7 @@ export async function telegramCallbackHandler(c: AppContext): Promise<Response> 
       reason: "private_owner_required",
       messageId: parsed.messageId
     });
-    await answerUnavailable(c.env, parsed.callbackId);
+    await answerUnavailable(c.env, parsed);
     return c.json({ ok: true });
   }
 
@@ -123,26 +125,26 @@ export async function telegramCallbackHandler(c: AppContext): Promise<Response> 
       reason: "mapping_missing_or_mismatch",
       messageId: parsed.messageId
     });
-    await answerUnavailable(c.env, parsed.callbackId);
+    await answerUnavailable(c.env, parsed);
     return c.json({ ok: true });
   }
 
   if (parsed.action === TELEGRAM_CALLBACK_TRASH_GMAIL) {
-    await trashGmailOrAnswer(c, parsed, mapping);
+    await answerThenTrash(c, parsed, mapping);
     return c.json({ ok: true });
   }
 
   const record = await getEmailCacheRecord(c.env.MAIL_KV, mapping.emailId);
 
   if (!record) {
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
+    await answerCallback(c.env, parsed, {
       text: "邮件缓存已过期或已删除"
     });
     return c.json({ ok: true });
   }
 
   if (parsed.action === TELEGRAM_CALLBACK_VIEW_RAW) {
-    await editOrAnswer(c, parsed, () => ({
+    await answerThenEdit(c, parsed, () => ({
       text: buildOriginalText(record),
       replyMarkup: buildOriginalKeyboard({
         showDeleteWithGmail: Boolean(mapping.gmailMessageId)
@@ -152,20 +154,25 @@ export async function telegramCallbackHandler(c: AppContext): Promise<Response> 
   }
 
   if (parsed.action === TELEGRAM_CALLBACK_BACK_SUMMARY) {
-    await editOrAnswer(c, parsed, async () => {
-      const text = await regenerateSummaryText(c.env, record);
+    await answerThenEdit(
+      c,
+      parsed,
+      async () => {
+        const text = await regenerateSummaryText(c.env, record);
 
-      return {
-        text,
-        replyMarkup: buildSummaryKeyboard({
-          showDeleteWithGmail: Boolean(mapping.gmailMessageId)
-        })
-      };
-    });
+        return {
+          text,
+          replyMarkup: buildSummaryKeyboard({
+            showDeleteWithGmail: Boolean(mapping.gmailMessageId)
+          })
+        };
+      },
+      "正在重新生成摘要…"
+    );
     return c.json({ ok: true });
   }
 
-  await answerUnavailable(c.env, parsed.callbackId);
+  await answerUnavailable(c.env, parsed);
   return c.json({ ok: true });
 }
 
@@ -190,7 +197,7 @@ function parseCallback(update: TelegramCallbackUpdate): ParsedCallback | null {
   };
 }
 
-async function editOrAnswer(
+async function answerThenEdit(
   c: AppContext,
   parsed: ParsedCallback,
   build: () =>
@@ -201,8 +208,13 @@ async function editOrAnswer(
     | Promise<{
         text: string;
         replyMarkup: ReturnType<typeof buildSummaryKeyboard>;
-      }>
+      }>,
+  answerText?: string
 ): Promise<void> {
+  if (!(await answerCallback(c.env, parsed, { text: answerText }))) {
+    return;
+  }
+
   try {
     const next = await build();
 
@@ -213,7 +225,6 @@ async function editOrAnswer(
       replyMarkup: next.replyMarkup
     });
 
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId);
     logInfo("telegram_callback_done", {
       action: parsed.action,
       messageId: parsed.messageId
@@ -221,10 +232,6 @@ async function editOrAnswer(
   } catch (error) {
     logError("telegram_callback_edit_failed", error, {
       messageId: parsed.messageId
-    });
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-      text: "操作失败，请稍后重试",
-      showAlert: true
     });
   }
 }
@@ -269,14 +276,33 @@ async function regenerateSummaryText(
   })}，请稍后重试。`, summary.privacyDowngraded);
 }
 
-async function answerUnavailable(env: Env, callbackId: string): Promise<void> {
-  await answerTelegramCallbackQuery(env, callbackId, {
+// 回调不带点击时间，只有应答结果能判断点击是否过期，所以执行操作前先应答。
+// 应答失败时不再执行，也不向外抛：webhook 返回 500 会让 Telegram 重试，并堵住本人后续的点击。
+async function answerCallback(
+  env: Env,
+  parsed: ParsedCallback,
+  options: { text?: string; showAlert?: boolean } = {}
+): Promise<boolean> {
+  try {
+    await answerTelegramCallbackQuery(env, parsed.callbackId, options);
+    return true;
+  } catch (error) {
+    logError("telegram_callback_answer_failed", error, {
+      action: parsed.action,
+      messageId: parsed.messageId
+    });
+    return false;
+  }
+}
+
+async function answerUnavailable(env: Env, parsed: ParsedCallback): Promise<void> {
+  await answerCallback(env, parsed, {
     text: "操作不可用或已过期",
     showAlert: true
   });
 }
 
-async function trashGmailOrAnswer(
+async function answerThenTrash(
   c: AppContext,
   parsed: ParsedCallback,
   mapping: MessageMapping
@@ -284,10 +310,14 @@ async function trashGmailOrAnswer(
   const gmailMessageId = mapping.gmailMessageId;
 
   if (!gmailMessageId) {
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
+    await answerCallback(c.env, parsed, {
       text: "未找到可移入垃圾箱的 Gmail 备份",
       showAlert: true
     });
+    return;
+  }
+
+  if (!(await answerCallback(c.env, parsed, { text: "🗑 正在删除" }))) {
     return;
   }
 
@@ -305,25 +335,19 @@ async function trashGmailOrAnswer(
         messageId: parsed.messageId
       });
     });
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-      text: "✅ 已删除"
-    });
     return;
   }
 
-  // 消息删不掉时（例如超过 Telegram 48 小时删除期限）按钮仍在，当场处理 Gmail 并告知结果。
-  try {
-    await trashMappedGmail(c.env, mapping, gmailMessageId);
-  } catch {
-    await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-      text: "Gmail 邮件处理失败，消息已保留，请稍后重试",
-      showAlert: true
-    });
-    return;
-  }
+  // 消息删不掉时（例如超过 Telegram 48 小时删除期限）按钮仍在，当场处理 Gmail。回调已应答，结果另发消息告知。
+  const notice = await trashMappedGmail(c.env, mapping, gmailMessageId).then(
+    () => TELEGRAM_DELETE_PARTIAL_SUCCESS_TEXT,
+    () => GMAIL_TRASH_RETRY_TEXT
+  );
 
-  await answerTelegramCallbackQuery(c.env, parsed.callbackId, {
-    text: TELEGRAM_DELETE_PARTIAL_SUCCESS_TEXT
+  await sendTelegramMessage(c.env, notice).catch((error) => {
+    logError("telegram_delete_notice_failed", error, {
+      messageId: parsed.messageId
+    });
   });
 }
 

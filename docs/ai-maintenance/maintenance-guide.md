@@ -90,12 +90,12 @@ KV 最终一致，以下操作不能提供严格的唯一性或互斥保证：
 2. Telegram 消息正文统一走 `sendMessage` / `editMessageText` 且带 `parse_mode: "HTML"`：发送层逐行转义 `< > &`，把验证码行的单反引号码值转换成 `<code>` 供 Telegram 一键复制，其余文本原样保留（含 `\n\n` 空行，保证段落间可读）；callback 提示使用 `answerCallbackQuery.text`。
    发送和编辑统一通过 `renderHtmlMessage` 限长：在 HTML 转义前按 UTF-16 长度保守控制到 4096，按字素边界裁剪，预留截断说明和 `PRIVACY_ROUTE_NOTICE`。缓存保留完整摘要，补发时同样限长。
    原文 callback 同样交给发送层限长，不提前按字符串下标截断，以免拆开表情或丢失截断说明。所有 Telegram 请求默认 10 秒超时，严重备份失败告警为 2.5 秒；超时必须取消请求，覆盖响应头及正文读取。
-3. `返回摘要` callback 用缓存的可读正文即时请求当前配置的摘要供应商，只更新当前 Telegram 消息，不写回 KV；失败时显示包含脱敏原因的摘要失败提示，备份结果保持有效。
+3. `返回摘要` callback 先提示 `正在重新生成摘要…`，再用缓存的可读正文即时请求当前配置的摘要供应商，只更新当前 Telegram 消息，不写回 KV；失败时显示包含脱敏原因的摘要失败提示，备份结果保持有效。
    首次摘要因解析失败或大邮件被跳过时，沿用缓存中的首次通知文字，不请求 AI。
-4. 删除操作删掉 Telegram 消息时，callback 通知统一显示 `✅ 已删除`。涉及告警文案的改动须同步运维文档。
-5. 「🗑 删邮件+消息」仅在 Gmail 主备份成功、消息映射含 `gmailMessageId` 时出现。先删除 Telegram 消息：
-   - 删除成功：立即删除该消息的 `msgmap`，重复送达的回调按已过期处理；回应 `✅ 已删除`，Gmail 交给 `ctx.waitUntil()` 在响应后处理。Gmail 查询返回 404 或已有 `TRASH` 标签时视为完成，否则调用 trash，成功后删除正文缓存。失败时由 `sendGmailTrashFailedAlert()` 发送带「🗑 重试删除」按钮的提示，按钮同为 `trash_gmail`；提示消息写入复制原映射的 `msgmap`，正文缓存保留。后台任务只有响应后 30 秒，Gmail 请求没有单独的超时，被中止时不会发出提示。
-   - 删除失败，常见于 Bot API 的 48 小时删除限制：当场处理 Gmail。Gmail 失败用 `show_alert: true` 提示重试；成功则用默认非弹窗通知提示消息删除失败、请重试或手动删除。两种情况都保留 KV。
+4. 所有 callback 先调用 `answerCallbackQuery` 再执行操作：回调不带点击时间，应答结果是判断点击是否过期的唯一依据。应答失败时记录 `telegram_callback_answer_failed`，不执行操作并返回 200；不要让应答失败变成 500，否则 Telegram 会按退避重试，同一用户的回调共用投递队列，后续点击会被堵住。应答之后无法再显示 callback 通知，后续失败只能记日志或另发消息。涉及告警文案的改动须同步运维文档。
+5. 「🗑 删邮件+消息」仅在 Gmail 主备份成功、消息映射含 `gmailMessageId` 时出现。先应答 `🗑 正在删除`，再删除 Telegram 消息：
+   - 删除成功：立即删除该消息的 `msgmap`，重复送达的回调按已过期处理；Gmail 交给 `ctx.waitUntil()` 在响应后处理。Gmail 查询返回 404 或已有 `TRASH` 标签时视为完成，否则调用 trash，成功后删除正文缓存。失败时由 `sendGmailTrashFailedAlert()` 发送带「🗑 重试删除」按钮的提示，按钮同为 `trash_gmail`；提示消息写入复制原映射的 `msgmap`，正文缓存保留。后台任务只有响应后 30 秒，Gmail 请求没有单独的超时，被中止时不会发出提示。
+   - 删除失败，常见于 Bot API 的 48 小时删除限制：当场处理 Gmail，并另发一条消息告知结果：Gmail 失败时提示重试，成功时提示消息删除失败、请重试或手动删除。两种情况都保留 KV。
 
 ### 修改 AI 摘要
 

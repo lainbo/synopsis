@@ -107,6 +107,8 @@ git diff --check
 | `gmail_direct_sync_failed` / `gmail_direct_message_failed` 日志 | 直收同步或单封邮件处理失败，同步位置未前进；日志中的 `account` 为账号编号 | 下一次推送或下一个台北时间 12:00 的 Cron 同步会重新拉取；持续出现时检查该账号的 Gmail 授权、KV 和日志中的原因码 |
 | `Gmail 邮件移入垃圾箱失败` | 「删邮件+消息」已删除 Telegram 消息，但后台将 Gmail 邮件移入垃圾箱失败；同时记录 `gmail_trash_failed` 日志 | 点提示中的「🗑 重试删除」，或到 Gmail 手动删除；持续出现时按原因检查对应账号的 Gmail 授权和 API 状态 |
 | `gmail_trash_alert_failed` / `gmail_trash_alert_mapping_failed` 日志 | 上述提示发送失败，或提示已发出但映射写入失败，点重试会显示操作已过期 | 按 `gmail_trash_failed` 日志中的账号编号和 Gmail 消息 ID 到 Gmail 手动删除 |
+| `telegram_callback_answer_failed` 日志 | 回调应答失败，这次点击没有执行，消息和映射保留。`telegram_http_400` 通常表示点击已过期，例如 Telegram 断连恢复后才送达的积压点击 | 重新点按钮；持续出现时检查 `getWebhookInfo` 的 `last_synchronization_error_date`、Telegram 状态和 Bot token |
+| `telegram_delete_notice_failed` 日志 | 消息删不掉时，告知 Gmail 处理结果的提示发送失败 | 对照同一时间的 `gmail_trash_failed` 日志，或到 Gmail 确认邮件状态 |
 | `gmail_direct_push_unmatched` 日志 | 推送体无法解析，或其中的邮箱地址与所有账号监听记录的地址都不一致，推送入口返回 404 | 刚部署或刚添加账号时，等待下一轮 Cron 建立监听后由 Pub/Sub 重投；持续出现时检查该邮箱是否已停用直收、对应 refresh token 是否仍在、续期是否失败 |
 
 ## Cron 和补偿
