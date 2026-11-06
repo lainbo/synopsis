@@ -136,7 +136,7 @@ flowchart TD
 flowchart TD
   A["点击「删邮件+消息」"] --> H{"answerCallbackQuery 成功？"}
   H -- "否，点击已过期或请求失败" --> I["不执行操作，记录日志，返回 200，消息和 KV 保留"]
-  H -- "是，提示 🗑 正在删除" --> B{"deleteMessage 成功？"}
+  H -- "是，不显示通知" --> B{"deleteMessage 成功？"}
   B -- "是" --> C["删除 msgmap"]
   C --> D["ctx.waitUntil：Gmail 移入垃圾箱"]
   D -- "成功、404 或已在垃圾箱" --> E["删除正文缓存"]

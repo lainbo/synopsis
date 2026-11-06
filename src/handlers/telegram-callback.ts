@@ -317,7 +317,7 @@ async function answerThenTrash(
     return;
   }
 
-  if (!(await answerCallback(c.env, parsed, { text: "🗑 正在删除" }))) {
+  if (!(await answerCallback(c.env, parsed))) {
     return;
   }
 
