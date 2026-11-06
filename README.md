@@ -19,11 +19,18 @@
 flowchart TD
     A[Cloudflare Email Routing 收到域名邮件] --> B[Worker 读取原始邮件]
     B --> C[Gmail API 写入原件]
-    C -- 成功 --> F[生成 AI 摘要并通知 Telegram]
     C -- 失败 --> D[依次尝试 Cloudflare Email Sending 和 Resend]
-    D -- 接受兜底发送 --> F
     D -- 全部失败 --> E[记录失败、尝试告警并让邮件处理报错]
+    C -- 成功 --> F[生成 AI 摘要并通知 Telegram]
+    D -- 接受兜底发送 --> F
     F -- 通知失败 --> G[KV 记录状态，Cron 按重试上限补发]
+
+    H[可选：邮件直接发到 Gmail 账号] --> I[Gmail 过滤器加标签]
+    I --> J[users.watch 发布到 Pub/Sub，推送到 Worker]
+    J --> K[按同步位置读取新增邮件，不再写入备份]
+    L[Cron 每天台北时间 12:00 同步一次] --> K
+    K -- 读取成功 --> F
+    K -- 处理失败 --> M[同步位置不前进，下一次推送或每日同步重新拉取]
 ```
 
 Gmail 主备份使用 `users.messages.insert`，写入 OAuth 授权账号。兜底邮件发送到 `BACKUP_EMAIL_TO`，该地址应能独立收信，避免再次路由回本 Worker。兜底服务接受发送请求后记录成功，最终投递仍受收件方策略影响。
