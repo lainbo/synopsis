@@ -219,8 +219,8 @@ async function parseErrorReason(
   response: Response
 ): Promise<{ reason: string; detail?: string }> {
   const text = await readErrorText(response);
-  const routeUnavailable =
-    ZDR_ROUTE_UNAVAILABLE_PATTERN.test(text) || (/provider/i.test(text) && /route/i.test(text));
+  // OpenRouter 没有可用端点时返回 404；限流等错误的正文也会提到供应商和路由设置，不能只看文字。
+  const routeUnavailable = response.status === 404 && ZDR_ROUTE_UNAVAILABLE_PATTERN.test(text);
 
   return {
     reason: routeUnavailable ? "openrouter_zdr_route_unavailable" : `openrouter_http_${response.status}`,
