@@ -107,15 +107,18 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 |---|---|
 | `OPENROUTER_BASE_URL` | 使用 `https://openrouter.ai/api/v1` |
 | `OPENROUTER_FALLBACK_MODEL` | 只使用主模型，不切换备用模型 |
+| `OPENROUTER_FALLBACK_PROVIDERS` | 备用模型由 OpenRouter 自动选择供应商 |
 | `OPENROUTER_ZDR` | 请求不携带 `provider` 参数；设为 `true` 或 `1` 时开启下述隐私路由行为 |
 
 认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=2048`、`temperature=0.2` 和 `reasoning: { effort: "low", exclude: true }`。不支持 reasoning 的模型由 OpenRouter 忽略该参数。
 
 配置备用模型后，主模型遇到网络、超时、403/408/409/425/429、5xx、路由不可用、无效响应、空摘要或截断等可切换错误时，下一次请求切备用模型。普通的 401/402 状态错误直接结束请求。通知生成流程会将实际响应模型写入 `summary_model`，并在备用模型生成摘要且通知完成后尝试发送模型切换告警，告警列出主模型、实际响应的备用模型和主模型的失败原因，例如 `openrouter_output_truncated`。
 
+`OPENROUTER_FALLBACK_PROVIDERS` 填写逗号分隔的 OpenRouter 供应商标识，例如 `baseten/fast,fireworks/us`。配置后，备用模型的请求携带 `provider: { order: [...], allow_fallbacks: false }`：OpenRouter 按列出的顺序选择供应商，前一家不可用时换下一家，不会转到列表以外的供应商；列出的供应商都不可用时，本次备用请求失败。主模型请求不受影响。标识取自模型页供应商端点的 tag：带变体的写法（如 `fireworks/us`）只匹配该端点，只写供应商名（如 `fireworks`）会匹配该供应商的全部端点，包括 spot 等变体。固定供应商应搭配不带 `~` 的固定版本模型 ID，别名切换到新版本后，列出的供应商不一定提供新版本。
+
 `finish_reason=content_filter` 或非空 `message.refusal` 返回 `openrouter_blocked`，结束本次摘要调用，不重试、切换备用模型或放宽 ZDR 限制；响应中的残留文字不作为成功摘要。
 
-`OPENROUTER_ZDR=true` 或 `1` 时请求携带 `provider: { zdr: true }`，优先要求供应商不保留请求数据；放宽限制后的重试不再携带 `provider`。主模型遇到 ZDR 路由不可用或 403 时，先切换到已配置的备用模型；未配置备用模型时，在主模型上放宽 ZDR 限制。备用模型遇到相同的路由错误时，在备用模型上放宽限制。Telegram 会显示隐私路由提示，首次通知、Cron 补发及“返回摘要”都适用；通知流程用 `summary_privacy_downgraded` 记录这一行为。账号级限制仍可能继续强制 ZDR，实际数据保留规则取决于最终路由。详见 [OpenRouter 路由设置](https://openrouter.ai/docs/guides/routing/provider-selection)。
+`OPENROUTER_ZDR=true` 或 `1` 时请求携带 `provider: { zdr: true }`，优先要求供应商不保留请求数据；放宽限制后的重试不再携带 `zdr`，配置了备用模型供应商时，备用模型放宽后仍只走这些供应商。主模型遇到 ZDR 路由不可用或 403 时，先切换到已配置的备用模型；未配置备用模型时，在主模型上放宽 ZDR 限制。备用模型遇到相同的路由错误时，在备用模型上放宽限制。Telegram 会显示隐私路由提示，首次通知、Cron 补发及“返回摘要”都适用；通知流程用 `summary_privacy_downgraded` 记录这一行为。账号级限制仍可能继续强制 ZDR，实际数据保留规则取决于最终路由。详见 [OpenRouter 路由设置](https://openrouter.ai/docs/guides/routing/provider-selection)。
 
 同一模型、同一 ZDR 设置下，每轮最多尝试 3 次，包含首次请求。配置备用模型时，主模型在首次可切换错误后结束该轮；备用模型和 ZDR 降级分别开始新一轮。ZDR 路由不可用或 403 会立即结束当前 ZDR 轮次，其他瞬时错误按该轮上限重试。整个摘要调用可能达到以下请求次数：
 
@@ -126,7 +129,7 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 
 这些是请求次数上限，实际次数取决于错误序列。单次超时 12 秒，覆盖响应头和正文读取；`Retry-After` 最多等待 2 秒。整个调用还受 Worker 执行时间限制。
 
-`pnpm verify:config` 和 `pnpm run deploy` 会查询公开模型列表，主模型或备用模型不存在时停止，不写文件。模型列表默认访问官方地址，可用本机环境变量 `OPENROUTER_MODELS_URL` 覆盖。错误详情会脱敏、截断后用于 Telegram/KV 排障。
+`pnpm verify:config` 和 `pnpm run deploy` 会查询公开模型列表，主模型或备用模型不存在时停止，不写文件。配置 `OPENROUTER_FALLBACK_PROVIDERS` 时，还会查询备用模型的公开供应商端点列表，有供应商当前不提供该模型，或未配置与主模型不同的备用模型时同样停止。模型列表默认访问官方地址，可用本机环境变量 `OPENROUTER_MODELS_URL` 覆盖。错误详情会脱敏、截断后用于 Telegram/KV 排障。
 
 ### Gemini 原生模式
 

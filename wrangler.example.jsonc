@@ -25,6 +25,8 @@
     // 可选：以下基础地址为默认值；备用模型默认不启用。
     // "OPENROUTER_BASE_URL": "https://openrouter.ai/api/v1",
     // "OPENROUTER_FALLBACK_MODEL": "YOUR_FALLBACK_MODEL_ID",
+    // 可选：备用模型只走以下供应商，按顺序尝试，逗号分隔；默认由 OpenRouter 自动路由。
+    // "OPENROUTER_FALLBACK_PROVIDERS": "provider-a,provider-b/variant",
     // "OPENROUTER_ZDR": "false",
 
     // C. Gemini：用本组替换 A 组的模式和模型，配套密钥 GEMINI_API_KEY。

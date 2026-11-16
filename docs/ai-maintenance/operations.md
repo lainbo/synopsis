@@ -13,7 +13,7 @@ pnpm run deploy
 
 依赖版本由 lockfile 固定，`pnpm-workspace.yaml` 仅允许 esbuild、workerd 安装脚本。新增依赖时检查来源和所需构建脚本。
 
-`pnpm verify:config` 只检查、不写文件。`pnpm run deploy` 先做同样的摘要配置检查：OpenRouter 模式查询公开模型列表确认模型存在，通用模式检查模型、地址和额外 JSON 参数，Gemini 检查模型和地址。随后类型检查并部署，不修改 `wrangler.jsonc`。
+`pnpm verify:config` 只检查、不写文件。`pnpm run deploy` 先做同样的摘要配置检查：OpenRouter 模式查询公开模型列表确认模型存在，配置了备用模型供应商时再确认这些供应商提供备用模型，通用模式检查模型、地址和额外 JSON 参数，Gemini 检查模型和地址。随后类型检查并部署，不修改 `wrangler.jsonc`。
 
 ## 自动部署
 

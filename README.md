@@ -194,7 +194,7 @@ pnpm build
 pnpm run deploy
 ```
 
-- `verify:config` 可用于部署前单独检查配置，不写文件；OpenRouter 模式会查询公开模型列表，确认模型存在。
+- `verify:config` 可用于部署前单独检查配置，不写文件；OpenRouter 模式会查询公开模型列表，确认模型存在；配置了备用模型供应商时，还会确认这些供应商提供备用模型。
 - `build` 使用示例配置在本地打包，不上传。
 - `deploy` 检查本机配置，再做类型检查并部署，不修改 `wrangler.jsonc`。
 

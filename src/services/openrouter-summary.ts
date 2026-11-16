@@ -22,8 +22,14 @@ interface OpenRouterRequestBody {
   messages: Array<{ role: "user"; content: string }>;
   max_tokens: number;
   temperature: number;
-  provider?: { zdr: true };
+  provider?: OpenRouterProviderPreferences;
   reasoning: { effort: "low"; exclude: true };
+}
+
+interface OpenRouterProviderPreferences {
+  zdr?: boolean;
+  order?: string[];
+  allow_fallbacks?: boolean;
 }
 
 type ModelSummaryResult = SummaryRequestResult & {
@@ -69,7 +75,13 @@ export async function generateOpenRouterSummary(
     });
   }
 
-  const fallback = await requestSummaryForModel(env, prompt, fallbackModel, zdrEnabled);
+  const fallback = await requestSummaryForModel(
+    env,
+    prompt,
+    fallbackModel,
+    zdrEnabled,
+    getFallbackProviderOrder(env)
+  );
   const result = toSummaryResult(fallback, {
     privacyDowngraded: fallback.privacyDowngraded,
     fallbackModelUsed: fallback.ok
@@ -88,12 +100,13 @@ async function requestSummaryForModel(
   env: Env,
   prompt: string,
   model: string,
-  zdrEnabled: boolean
+  zdrEnabled: boolean,
+  providerOrder?: string[]
 ): Promise<ModelSummaryResult> {
-  const first = await requestSummary(env, prompt, model, zdrEnabled);
+  const first = await requestSummary(env, prompt, model, zdrEnabled, providerOrder);
 
   if (!first.ok && zdrEnabled && shouldDowngradeZdr(first.reason)) {
-    const retry = await requestSummary(env, prompt, model, false);
+    const retry = await requestSummary(env, prompt, model, false, providerOrder);
 
     return { ...retry, privacyDowngraded: true };
   }
@@ -105,10 +118,11 @@ function requestSummary(
   env: Env,
   prompt: string,
   model: string,
-  zdr: boolean
+  zdr: boolean,
+  providerOrder?: string[]
 ): Promise<SummaryRequestResult> {
   return requestSummaryWithRetry(
-    () => requestSummaryOnce(env, prompt, model, zdr),
+    () => requestSummaryOnce(env, prompt, model, zdr, providerOrder),
     (reason) => !(zdr && shouldDowngradeZdr(reason)) && isRetryableOpenRouterReason(reason)
   );
 }
@@ -117,7 +131,8 @@ async function requestSummaryOnce(
   env: Env,
   prompt: string,
   model: string,
-  zdr: boolean
+  zdr: boolean,
+  providerOrder?: string[]
 ): Promise<SummaryRequestResult> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
@@ -128,7 +143,7 @@ async function requestSummaryOnce(
       messages: [{ role: "user", content: prompt }],
       max_tokens: SUMMARY_MAX_OUTPUT_TOKENS,
       temperature: 0.2,
-      provider: zdr ? { zdr: true } : undefined,
+      provider: buildProviderPreferences(zdr, providerOrder),
       reasoning: { effort: "low", exclude: true }
     };
 
@@ -166,6 +181,30 @@ function getOptionalFallbackModel(env: Env, primaryModel: string): string | unde
   const configured = env.OPENROUTER_FALLBACK_MODEL?.trim();
 
   return configured && configured !== primaryModel ? configured : undefined;
+}
+
+function getFallbackProviderOrder(env: Env): string[] | undefined {
+  const providers = env.OPENROUTER_FALLBACK_PROVIDERS
+    ?.split(",")
+    .map((provider) => provider.trim())
+    .filter(Boolean);
+
+  return providers?.length ? providers : undefined;
+}
+
+// 固定供应商时关闭 OpenRouter 自动回退，只在列出的供应商之间按顺序切换。
+function buildProviderPreferences(
+  zdr: boolean,
+  order: string[] | undefined
+): OpenRouterProviderPreferences | undefined {
+  if (!zdr && !order) {
+    return undefined;
+  }
+
+  return {
+    ...(zdr && { zdr: true }),
+    ...(order && { order, allow_fallbacks: false })
+  };
 }
 
 function isRetryableOpenRouterReason(reason: string): boolean {

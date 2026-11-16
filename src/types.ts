@@ -18,6 +18,7 @@ export interface Env {
   OPENROUTER_API_KEY?: string;
   OPENROUTER_MODEL?: string;
   OPENROUTER_FALLBACK_MODEL?: string;
+  OPENROUTER_FALLBACK_PROVIDERS?: string;
   GEMINI_API_KEY?: string;
   GEMINI_MODEL?: string;
   TG_BOT_TOKEN: string;

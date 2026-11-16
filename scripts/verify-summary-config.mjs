@@ -57,11 +57,37 @@ async function main() {
     );
   }
 
+  const fallbackProviders = parseProviderList(vars.OPENROUTER_FALLBACK_PROVIDERS);
+
+  if (fallbackProviders.length > 0) {
+    if (!modelIds[1]) {
+      fail("配置 OPENROUTER_FALLBACK_PROVIDERS 时，必须同时配置与主模型不同的 OPENROUTER_FALLBACK_MODEL。");
+    }
+
+    const tags = await fetchEndpointTags(modelIds[1]);
+    const missingProviders = fallbackProviders.filter(
+      (provider) => !tags.some((tag) => tag === provider || tag.startsWith(`${provider}/`))
+    );
+
+    if (missingProviders.length > 0) {
+      fail(
+        [
+          `OpenRouter 备用模型供应商校验失败：以下供应商当前没有提供 ${modelIds[1]}：`,
+          ...missingProviders.map((provider) => `- ${provider}`)
+        ].join("\n")
+      );
+    }
+  }
+
   console.log("OpenRouter 模型配置校验通过：");
   console.log(`- 主模型：${modelIds[0]}`);
 
   if (modelIds[1]) {
     console.log(`- 备用模型：${modelIds[1]}`);
+  }
+
+  if (fallbackProviders.length > 0) {
+    console.log(`- 备用模型供应商：${fallbackProviders.join(" → ")}`);
   }
 }
 
@@ -98,26 +124,42 @@ function collectModelIds(vars) {
   ].filter((modelId, index, modelIds) => modelId && modelIds.indexOf(modelId) === index);
 }
 
-async function fetchOpenRouterModels() {
+async function fetchOpenRouterJson(url, label) {
   let response;
 
   try {
-    response = await fetch(OPENROUTER_MODELS_URL, { signal: AbortSignal.timeout(12000) });
+    response = await fetch(url, { signal: AbortSignal.timeout(12000) });
   } catch (error) {
-    fail(`无法请求 OpenRouter 模型列表：${formatError(error)}`);
+    fail(`无法请求 OpenRouter ${label}：${formatError(error)}`);
   }
 
   if (!response.ok) {
-    fail(`OpenRouter 模型列表请求失败：HTTP ${response.status}。`);
+    fail(`OpenRouter ${label}请求失败：HTTP ${response.status}。`);
   }
-
-  let payload;
 
   try {
-    payload = await response.json();
+    return await response.json();
   } catch (error) {
-    fail(`OpenRouter 模型列表响应不是合法 JSON：${formatError(error)}`);
+    fail(`OpenRouter ${label}响应不是合法 JSON：${formatError(error)}`);
   }
+}
+
+async function fetchEndpointTags(modelId) {
+  const payload = await fetchOpenRouterJson(
+    `${OPENROUTER_MODELS_URL}/${modelId}/endpoints`,
+    "备用模型供应商列表"
+  );
+  const endpoints = payload?.data?.endpoints;
+
+  if (!Array.isArray(endpoints)) {
+    fail("OpenRouter 备用模型供应商列表响应格式异常：缺少 data.endpoints 数组。");
+  }
+
+  return endpoints.map((endpoint) => endpoint?.tag).filter((tag) => typeof tag === "string");
+}
+
+async function fetchOpenRouterModels() {
+  const payload = await fetchOpenRouterJson(OPENROUTER_MODELS_URL, "模型列表");
 
   if (!payload || !Array.isArray(payload.data)) {
     fail("OpenRouter 模型列表响应格式异常：缺少 data 数组。");
@@ -138,6 +180,12 @@ function parseSummaryProvider(value) {
   }
 
   fail("SUMMARY_PROVIDER 只能配置为 openai、openrouter 或 gemini。");
+}
+
+function parseProviderList(value) {
+  return typeof value === "string"
+    ? value.split(",").map((provider) => provider.trim()).filter(Boolean)
+    : [];
 }
 
 function parseOptionalString(value) {

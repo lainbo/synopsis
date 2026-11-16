@@ -74,6 +74,12 @@ Cron 按编号顺序串行续期和同步各账号，单个账号失败只记录
 
 OpenRouter 和 Gemini 原生模式的输出上限统一为 2048 token，思考 token 与正文共用这一上限。依据是 2026-11-16 至 11-17 的 OpenRouter 调用日志（Worker 版本 `39672ab3`，上限 500，台北时间）：`~google/gemini-flash-latest` 当时指向 `google/gemini-4-hydrogen-20261112`，低思考强度下 4 次摘要分别用掉 330–497 个思考 token，正文约 55 token；其中 23:41 和 00:08 两次思考用掉 497 个，结束原因为 `length`，按截断失败切到了备用模型。
 
+OpenRouter 备用模型只在主模型失败后调用，摘要调用已经用掉一次主模型请求，剩余请求仍受 12 秒单次超时和 Worker 执行时间限制，因此备用模型优先考虑响应速度和可用率。此前的备用模型 `x-ai/grok-4.7` 强制思考，2026-11-17 的 OpenRouter 日志中单次约 7–12 秒，接近超时，故改用思考不强制开启的 DeepSeek Flash。备用模型使用固定版本 `deepseek/deepseek-v4.1-flash-1017`，并通过 `OPENROUTER_FALLBACK_PROVIDERS` 按顺序固定为 `together`、`crusoe/fp8`、`fireworks/us`、`baseten/fast`。别名指向新版本后，供应商不会同时全部上线，固定版本才能让固定的供应商列表持续有效。
+
+供应商依据 2026-11-17 该模型在 OpenRouter 模型页的数据挑选：排除声明为 fp4、mxfp4 量化的端点（Sail Research、Relace、OpenInference、Wafer）；排除可用率 95.4% 的 CoreWeave；Fireworks 只写 `fireworks/us`，因为 `fireworks` 会同时匹配当时处于降级状态的 `fireworks/spot`；DeepSeek 官方端点当时不可路由。入选的 4 个端点当时可用率均为 100%，OpenRouter AutoExacto 质量测试的 GPQA Diamond 为 89.7–90.8，自动路由为 90.0；Baseten (Fast) 的量化方式未公开，质量测试成绩不低于自动路由，因此保留。
+
+顺序依据同日本机实测：通过生产使用的代理地址，按实际摘要代码模拟主模型 HTTP 503，逐家单独固定供应商请求备用模型，每家 3 次，耗时含响应正文读取。Together 约 1.6–2.1 秒，Crusoe 约 1.8–3.0 秒，Fireworks US 约 2.7–3.7 秒，均成功且结束原因为 `stop`，思考 token 为 234–509 个。Baseten (Fast) 页面吞吐量最高，但 3 次中 2 次返回 429（上游限流），因此排在最后。按当时 Baseten 排第一的完整列表请求 2 次，均由第二家 Fireworks 返回，前面的供应商不可用时 OpenRouter 会在同一次请求内转到下一家。
+
 原文在本人 Bot 私聊中显示为可读文本，完整排版与附件在备份邮箱查看。
 
 ## 验证方法与限制
