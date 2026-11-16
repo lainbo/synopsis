@@ -95,7 +95,7 @@ git diff --check
 | `telegram_timeout` | Telegram 请求或响应正文读取超时，已取消本次请求 | 查看通知状态，等待 Cron 补偿；服务端已经接受但未返回结果时仍可能重复发送 |
 | `telegram_compensation_state_failed` | 单封邮件的状态读取或补偿异常，本轮继续处理其他邮件 | 对照处理 ID 排查 KV 状态和后续补偿结果 |
 | `openai_config_invalid` / `openrouter_config_invalid` / `gemini_config_invalid` | 当前摘要模式的配置缺失或无效，未发起摘要请求 | 检查对应的模型、密钥和基础地址；通用模式还需检查 `OPENAI_EXTRA_BODY` |
-| `AI 摘要已切换备用模型` | OpenRouter 主模型出现可切换错误后，备用模型生成摘要成功，通知流程发送模型切换告警 | 检查 OpenRouter 主模型和 ZDR/非 ZDR 路由状态 |
+| `AI 摘要已切换备用模型` | OpenRouter 主模型出现可切换错误后，备用模型生成摘要成功，通知流程发送模型切换告警；告警中的“原因”是主模型的失败原因 | 按原因排查：`openrouter_output_truncated` 先在 OpenRouter 日志中查看该次调用的思考 token 是否占满输出上限；HTTP 状态或路由类原因检查主模型和 ZDR/非 ZDR 路由状态 |
 | `openrouter_http_403` | OpenRouter 拒绝摘要请求；如果 `summary_privacy_downgraded=true`，表示 ZDR 降级后仍失败 | 检查 API key 权限、模型访问权限、余额/额度、OpenRouter provider 路由；短暂抖动可通过 `返回摘要` 重新生成 |
 | `openrouter_http_429` / `openrouter_http_5xx` | OpenRouter 按当前模型和 ZDR 配置执行重试后仍失败，请求次数见 [配置说明](configuration-and-secrets.md#openrouter-专用模式) | 看 OpenRouter 状态、模型供应商状态和是否持续限流；短暂抖动通常会在摘要重试或 `返回摘要` 时恢复 |
 | `gemini_http_401` / `gemini_http_403` | Gemini 拒绝摘要请求 | 检查 `GEMINI_API_KEY`、模型名和 API 权限；不要在日志里回显 key |

@@ -1,6 +1,8 @@
 import type { SummaryResult } from "./email-summary";
 
 export const SUMMARY_TIMEOUT_MS = 12000;
+// 思考 token 与正文共用输出上限，低思考强度也可能用掉数百个。
+export const SUMMARY_MAX_OUTPUT_TOKENS = 2048;
 
 const SUMMARY_MAX_ATTEMPTS = 3;
 const MAX_RETRY_AFTER_MS = 2000;

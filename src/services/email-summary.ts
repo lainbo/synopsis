@@ -10,6 +10,7 @@ export type SummaryResult =
       summary: string;
       privacyDowngraded: boolean;
       fallbackModelUsed: boolean;
+      primaryFailureReason?: string;
       model: string;
     }
   | {

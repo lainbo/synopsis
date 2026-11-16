@@ -40,7 +40,7 @@ export function sanitizeAlertReason(value: unknown): string {
 
   const reason = value.trim();
 
-  if (/^[A-Za-z][A-Za-z0-9_.:/-]{0,95}$/.test(reason)) {
+  if (/^~?[A-Za-z][A-Za-z0-9_.:/-]{0,95}$/.test(reason)) {
     return reason;
   }
 
@@ -120,7 +120,7 @@ export async function sendAiSummaryFallbackModelAlert(
   details: {
     primaryModel: string;
     fallbackModel: string;
-    reason: string;
+    reason?: string;
   }
 ): Promise<ReliabilityAlertResult> {
   const text = [

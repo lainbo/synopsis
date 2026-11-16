@@ -8,14 +8,13 @@ import {
   readErrorText,
   requestSummaryWithRetry,
   sanitizeErrorDetail,
+  SUMMARY_MAX_OUTPUT_TOKENS,
   SUMMARY_TIMEOUT_MS,
   toSummaryResult,
   type SummaryRequestResult
 } from "./summary-request";
 import type { SummaryMailInput, SummaryResult } from "./email-summary";
 import type { Env } from "../types";
-
-const GEMINI_MAX_OUTPUT_TOKENS = 2048;
 
 const BLOCKED_FINISH_REASONS = new Set([
   "SAFETY",
@@ -77,7 +76,7 @@ async function requestSummaryOnce(
     const body: GeminiRequestBody = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
-        maxOutputTokens: GEMINI_MAX_OUTPUT_TOKENS,
+        maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
         thinkingConfig: { thinkingLevel: "low" }
       }
     };

@@ -258,7 +258,7 @@ async function maybeSendFallbackModelAlert(
   const alert = await sendAiSummaryFallbackModelAlert(env, {
     primaryModel: getRequiredEnv(env, "OPENROUTER_MODEL"),
     fallbackModel: summary.model,
-    reason: "openrouter_primary_model_failed"
+    reason: summary.primaryFailureReason
   });
 
   if (!alert.ok) {

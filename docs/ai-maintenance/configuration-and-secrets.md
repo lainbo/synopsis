@@ -109,9 +109,9 @@ Gmail 授权过程见 [Gmail 设置](../gmail-oauth-setup.md)，Bot 设置见 [T
 | `OPENROUTER_FALLBACK_MODEL` | 只使用主模型，不切换备用模型 |
 | `OPENROUTER_ZDR` | 请求不携带 `provider` 参数；设为 `true` 或 `1` 时开启下述隐私路由行为 |
 
-认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=500`、`temperature=0.2` 和 `reasoning: { effort: "low", exclude: true }`。不支持 reasoning 的模型由 OpenRouter 忽略该参数。
+认证使用 `OPENROUTER_API_KEY` Bearer，请求路径追加 `/chat/completions`。缺少模型或密钥，或填写的基础地址不合法时返回配置错误。每次请求发送单个 `model`、`max_tokens=2048`、`temperature=0.2` 和 `reasoning: { effort: "low", exclude: true }`。不支持 reasoning 的模型由 OpenRouter 忽略该参数。
 
-配置备用模型后，主模型遇到网络、超时、403/408/409/425/429、5xx、路由不可用、无效响应、空摘要或截断等可切换错误时，下一次请求切备用模型。普通的 401/402 状态错误直接结束请求。通知生成流程会将实际响应模型写入 `summary_model`，并在备用模型生成摘要且通知完成后尝试发送模型切换告警。
+配置备用模型后，主模型遇到网络、超时、403/408/409/425/429、5xx、路由不可用、无效响应、空摘要或截断等可切换错误时，下一次请求切备用模型。普通的 401/402 状态错误直接结束请求。通知生成流程会将实际响应模型写入 `summary_model`，并在备用模型生成摘要且通知完成后尝试发送模型切换告警，告警列出主模型、实际响应的备用模型和主模型的失败原因，例如 `openrouter_output_truncated`。
 
 `finish_reason=content_filter` 或非空 `message.refusal` 返回 `openrouter_blocked`，结束本次摘要调用，不重试、切换备用模型或放宽 ZDR 限制；响应中的残留文字不作为成功摘要。
 

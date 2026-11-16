@@ -10,6 +10,7 @@ import {
   readErrorText,
   requestSummaryWithRetry,
   sanitizeErrorDetail,
+  SUMMARY_MAX_OUTPUT_TOKENS,
   SUMMARY_TIMEOUT_MS,
   toSummaryResult,
   type SummaryRequestResult
@@ -69,11 +70,12 @@ export async function generateOpenRouterSummary(
   }
 
   const fallback = await requestSummaryForModel(env, prompt, fallbackModel, zdrEnabled);
-
-  return toSummaryResult(fallback, {
+  const result = toSummaryResult(fallback, {
     privacyDowngraded: fallback.privacyDowngraded,
     fallbackModelUsed: fallback.ok
   });
+
+  return result.ok ? { ...result, primaryFailureReason: primary.reason } : result;
 }
 
 function isZdrEnabled(env: Env): boolean {
@@ -124,7 +126,7 @@ async function requestSummaryOnce(
     const body: OpenRouterRequestBody = {
       model,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 500,
+      max_tokens: SUMMARY_MAX_OUTPUT_TOKENS,
       temperature: 0.2,
       provider: zdr ? { zdr: true } : undefined,
       reasoning: { effort: "low", exclude: true }
