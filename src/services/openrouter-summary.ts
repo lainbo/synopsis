@@ -63,10 +63,15 @@ export async function generateOpenRouterSummary(
     };
   }
 
+  const primaryProviders = getProviderOrder(env.OPENROUTER_PROVIDERS);
+
   // 配置了备用模型时，主模型只请求一次；遇到可切换错误时，由备用模型负责重试和 ZDR 降级。
   const primary: ModelSummaryResult = fallbackModel
-    ? { ...(await requestSummaryOnce(env, prompt, primaryModel, zdrEnabled)), privacyDowngraded: false }
-    : await requestSummaryForModel(env, prompt, primaryModel, zdrEnabled);
+    ? {
+        ...(await requestSummaryOnce(env, prompt, primaryModel, zdrEnabled, primaryProviders)),
+        privacyDowngraded: false
+      }
+    : await requestSummaryForModel(env, prompt, primaryModel, zdrEnabled, primaryProviders);
 
   if (primary.ok || !fallbackModel || !shouldSwitchToFallbackModel(primary.reason)) {
     return toSummaryResult(primary, {
@@ -80,7 +85,7 @@ export async function generateOpenRouterSummary(
     prompt,
     fallbackModel,
     zdrEnabled,
-    getFallbackProviderOrder(env)
+    getProviderOrder(env.OPENROUTER_FALLBACK_PROVIDERS)
   );
   const result = toSummaryResult(fallback, {
     privacyDowngraded: fallback.privacyDowngraded,
@@ -183,8 +188,8 @@ function getOptionalFallbackModel(env: Env, primaryModel: string): string | unde
   return configured && configured !== primaryModel ? configured : undefined;
 }
 
-function getFallbackProviderOrder(env: Env): string[] | undefined {
-  const providers = env.OPENROUTER_FALLBACK_PROVIDERS
+function getProviderOrder(raw: string | undefined): string[] | undefined {
+  const providers = raw
     ?.split(",")
     .map((provider) => provider.trim())
     .filter(Boolean);

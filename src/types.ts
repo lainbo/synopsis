@@ -17,6 +17,7 @@ export interface Env {
   GEMINI_BASE_URL?: string;
   OPENROUTER_API_KEY?: string;
   OPENROUTER_MODEL?: string;
+  OPENROUTER_PROVIDERS?: string;
   OPENROUTER_FALLBACK_MODEL?: string;
   OPENROUTER_FALLBACK_PROVIDERS?: string;
   GEMINI_API_KEY?: string;
